@@ -95,7 +95,9 @@ class RadialMenu(QWidget):
             DiscItem("terminal", "", "", "kitty", "app", "#e8e8e8"),
             DiscItem("files", "", "", "nautilus", "app", "#e8e8e8"),
             DiscItem("editor", "", "", "code", "app", "#e8e8e8"),
+            DiscItem("music", "", "", "playerctl play-pause", "command", "#e8e8e8"),
             DiscItem("screenshot", "", "", "grim -g $(slurp) ~/Pictures/$(date +%Y%m%d_%H%M%S).png", "command", "#e8e8e8"),
+            DiscItem("lock", "", "", "hyprlock", "command", "#e8e8e8"),
             DiscItem("close_win", "", "", "kill", "hyprland", "#e8e8e8"),
         ]
 
@@ -129,11 +131,13 @@ class RadialMenu(QWidget):
                 {"id": "terminal", "label": "", "icon": "", "action": "kitty", "action_type": "app", "color": "#e8e8e8"},
                 {"id": "files", "label": "", "icon": "", "action": "nautilus", "action_type": "app", "color": "#e8e8e8"},
                 {"id": "editor", "label": "", "icon": "", "action": "code", "action_type": "app", "color": "#e8e8e8"},
+                {"id": "music", "label": "", "icon": "", "action": "playerctl play-pause", "action_type": "command", "color": "#e8e8e8"},
                 {"id": "screenshot", "label": "", "icon": "", "action": "grim -g $(slurp) ~/Pictures/$(date +%Y%m%d_%H%M%S).png", "action_type": "command", "color": "#e8e8e8"},
+                {"id": "lock", "label": "", "icon": "", "action": "hyprlock", "action_type": "command", "color": "#e8e8e8"},
                 {"id": "close_win", "label": "", "icon": "", "action": "kill", "action_type": "hyprland", "color": "#e8e8e8"},
             ],
             "settings": {
-                "dot_count": 6,
+                "dot_count": 8,
                 "spread_distance": 100,
                 "dot_radius": 12,
                 "animation_duration_ms": 250
@@ -261,29 +265,21 @@ class RadialMenu(QWidget):
         progress = self._animation_progress
         angle_per_dot = 360 / num_items
 
-        # Fixed spread distance
-        spread = 100
+        # Fixed spread distance (20% closer to center)
+        spread = 112
 
-        # Draw center close button (white circle with X)
+        # Draw center close button (white circle with X) - no glow
         center_radius = 18
 
         # Hover effect for center
         if self.hovered_index == -2:  # -2 indicates center is hovered
             center_radius += 4
             center_color = QColor(255, 255, 255, 255)
-            center_glow = QColor(255, 255, 255, 100)
         else:
             center_color = QColor(255, 255, 255, 220)
-            center_glow = QColor(255, 255, 255, 60)
 
-        # Draw center glow
+        # Draw single center circle (no glow)
         painter.setPen(Qt.PenStyle.NoPen)
-        for j in range(4, 0, -1):
-            glow_alpha = int(center_glow.alpha() / (j * 0.7))
-            painter.setBrush(QColor(center_glow.red(), center_glow.green(), center_glow.blue(), glow_alpha))
-            painter.drawEllipse(QPoint(int(cx), int(cy)), int(center_radius + j * 4), int(center_radius + j * 4))
-
-        # Draw center circle
         painter.setBrush(center_color)
         painter.drawEllipse(QPoint(int(cx), int(cy)), int(center_radius), int(center_radius))
 
@@ -303,7 +299,7 @@ class RadialMenu(QWidget):
             dot_y = cy + spread * math.sin(math.radians(angle))
 
             # Always visible dots
-            dot_radius = 20
+            dot_radius = 35
 
             # Hover effect
             if i == self.hovered_index:
@@ -319,20 +315,9 @@ class RadialMenu(QWidget):
                           item_id=item.id)
 
     def _draw_dot(self, painter, x, y, radius, color, glow_color, label="", item_id=""):
-        """Draw a single dot with glow and custom icon"""
-        # Draw glow layers
+        """Draw a single dot with custom icon - no glow effect"""
+        # Draw single circle (no glow layers)
         painter.setPen(Qt.PenStyle.NoPen)
-        for j in range(4, 0, -1):
-            glow_alpha = int(glow_color.alpha() / (j * 0.7))
-            if glow_alpha > 0:
-                painter.setBrush(QColor(glow_color.red(), glow_color.green(), glow_color.blue(), glow_alpha))
-                painter.drawEllipse(
-                    QPoint(int(x), int(y)),
-                    int(radius + j * 4),
-                    int(radius + j * 4)
-                )
-
-        # Draw main dot
         painter.setBrush(color)
         painter.drawEllipse(
             QPoint(int(x), int(y)),
@@ -415,6 +400,30 @@ class RadialMenu(QWidget):
             painter.drawLine(int(cx - size * 0.5), int(cy - size * 0.5), int(cx + size * 0.5), int(cy + size * 0.5))
             painter.drawLine(int(cx + size * 0.5), int(cy - size * 0.5), int(cx - size * 0.5), int(cy + size * 0.5))
 
+        elif item_id == "music":
+            # Music note icon
+            # Note head (circle)
+            painter.setBrush(color)
+            painter.drawEllipse(QPoint(int(cx - size * 0.2), int(cy + size * 0.3)), int(size * 0.25), int(size * 0.2))
+            # Stem
+            painter.drawLine(int(cx + size * 0.05), int(cy + size * 0.3), int(cx + size * 0.05), int(cy - size * 0.4))
+            # Flag
+            painter.drawLine(int(cx + size * 0.05), int(cy - size * 0.4), int(cx + size * 0.4), int(cy - size * 0.1))
+            painter.drawLine(int(cx + size * 0.4), int(cy - size * 0.1), int(cx + size * 0.05), int(cy + size * 0.1))
+
+        elif item_id == "lock":
+            # Lock icon
+            lock_w = size * 0.8
+            lock_h = size * 0.6
+            # Lock body
+            painter.drawRoundedRect(int(cx - lock_w/2), int(cy - lock_h/2 + size * 0.2), int(lock_w), int(lock_h), 3, 3)
+            # Shackle (arc)
+            painter.drawArc(int(cx - lock_w/2), int(cy - size * 0.6), int(lock_w), int(size * 0.8), 0, 180 * 16)
+            # Keyhole
+            painter.setBrush(color)
+            painter.drawEllipse(QPoint(int(cx), int(cy + size * 0.1)), int(size * 0.1), int(size * 0.1))
+            painter.drawLine(int(cx), int(cy + size * 0.1), int(cx), int(cy + size * 0.3))
+
     def _create_segment_path(self, cx, cy, inner_r, outer_r, start_angle, end_angle):
         """Create a pie segment path"""
         from PyQt6.QtGui import QPainterPath
@@ -461,7 +470,7 @@ class RadialMenu(QWidget):
         # Check distance to each dot
         num_items = len(self.items)
         angle_per_dot = 360 / num_items
-        spread = 100
+        spread = 140
 
         self.hovered_index = -1
 
@@ -475,7 +484,7 @@ class RadialMenu(QWidget):
             dy = pos.y() - dot_y
             distance = (dx ** 2 + dy ** 2) ** 0.5
 
-            if distance < 28:
+            if distance < 50:  # Larger hit area for bigger dots
                 self.hovered_index = i
                 break
 
