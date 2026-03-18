@@ -61,6 +61,10 @@ class RadialMenu(QWidget):
         self._setup_animations()
         self._start_workspace_monitor()
 
+        # Sub-menu state (sub_items is set in _load_config)
+        self.expanded_index = -1
+        self.sub_hovered_index = -1
+
     def _setup_window(self):
         """Configure full-screen overlay window"""
         self.setWindowFlags(
@@ -93,13 +97,23 @@ class RadialMenu(QWidget):
         default_items = [
             DiscItem("browser", "", "", "firefox", "app", "#e8e8e8"),
             DiscItem("terminal", "", "", "kitty", "app", "#e8e8e8"),
-            DiscItem("files", "", "", "nautilus", "app", "#e8e8e8"),
+            DiscItem("apps", "", "", "", "menu", "#e8e8e8"),  # Expands to show apps
             DiscItem("editor", "", "", "code", "app", "#e8e8e8"),
             DiscItem("music", "", "", "playerctl play-pause", "command", "#e8e8e8"),
             DiscItem("screenshot", "", "", "grim -g $(slurp) ~/Pictures/$(date +%Y%m%d_%H%M%S).png", "command", "#e8e8e8"),
             DiscItem("lock", "", "", "hyprlock", "command", "#e8e8e8"),
             DiscItem("close_win", "", "", "kill", "hyprland", "#e8e8e8"),
         ]
+
+        # Sub-menu for apps
+        self.sub_items = [
+            DiscItem("obsidian", "", "", "obsidian", "app", "#e8e8e8"),
+            DiscItem("antigravity", "", "", "antigravity", "app", "#e8e8e8"),
+            DiscItem("zen", "", "", "zen-browser", "app", "#e8e8e8"),
+            DiscItem("zapzap", "", "", "zapzap", "app", "#e8e8e8"),
+        ]
+        self.expanded_index = -1  # Which item is expanded
+        self.sub_hovered_index = -1  # Which sub-item is hovered
 
         if Path(self.config_path).exists():
             try:
@@ -129,7 +143,7 @@ class RadialMenu(QWidget):
             "items": [
                 {"id": "browser", "label": "", "icon": "", "action": "firefox", "action_type": "app", "color": "#e8e8e8"},
                 {"id": "terminal", "label": "", "icon": "", "action": "kitty", "action_type": "app", "color": "#e8e8e8"},
-                {"id": "files", "label": "", "icon": "", "action": "nautilus", "action_type": "app", "color": "#e8e8e8"},
+                {"id": "apps", "label": "", "icon": "", "action": "", "action_type": "menu", "color": "#e8e8e8"},
                 {"id": "editor", "label": "", "icon": "", "action": "code", "action_type": "app", "color": "#e8e8e8"},
                 {"id": "music", "label": "", "icon": "", "action": "playerctl play-pause", "action_type": "command", "color": "#e8e8e8"},
                 {"id": "screenshot", "label": "", "icon": "", "action": "grim -g $(slurp) ~/Pictures/$(date +%Y%m%d_%H%M%S).png", "action_type": "command", "color": "#e8e8e8"},
@@ -314,6 +328,11 @@ class RadialMenu(QWidget):
             self._draw_dot(painter, dot_x, dot_y, dot_radius, color, glow,
                           item_id=item.id)
 
+            # If apps menu is expanded, draw sub-items
+            if self.expanded_index >= 0 and self.items[self.expanded_index].id == "apps":
+                if i == self.expanded_index:
+                    self._draw_sub_items(painter, dot_x, dot_y, angle)
+
     def _draw_dot(self, painter, x, y, radius, color, glow_color, label="", item_id=""):
         """Draw a single dot with custom icon - no glow effect"""
         # Draw single circle (no glow layers)
@@ -328,6 +347,47 @@ class RadialMenu(QWidget):
         # Draw icon based on item_id
         icon_color = QColor(40, 40, 40, 220) if color.lightness() > 150 else QColor(255, 255, 255, 220)
         self._draw_icon(painter, x, y, radius * 0.5, item_id, icon_color)
+
+    def _draw_sub_items(self, painter, parent_x, parent_y, parent_angle):
+        """Draw sub-menu items that extend perpendicular to the radial direction (sideways)"""
+        import math
+
+        num_sub = len(self.sub_items)
+        sub_spacing = 65  # Distance between sub-items
+        sub_radius = 26
+
+        # Extend perpendicular to the radial direction (sideways/tangent to the circle)
+        # Perpendicular angle = parent_angle + 90 degrees (for clockwise arrangement)
+        perp_angle = parent_angle + 90
+        direction_x = math.cos(math.radians(perp_angle))
+        direction_y = math.sin(math.radians(perp_angle))
+
+        # Center the sub-items around the parent
+        total_width = (num_sub - 1) * sub_spacing
+        start_offset = -total_width / 2
+
+        for j in range(num_sub):
+            # Position each sub-item along the perpendicular direction
+            offset = start_offset + j * sub_spacing
+            sub_x = parent_x + offset * direction_x
+            sub_y = parent_y + offset * direction_y
+
+            # Hover effect
+            if j == self.sub_hovered_index:
+                sub_radius_hover = sub_radius + 4
+                color = QColor(255, 255, 255, 255)
+            else:
+                sub_radius_hover = sub_radius
+                color = QColor(232, 232, 232, 220)
+
+            # Draw sub dot
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            painter.drawEllipse(QPoint(int(sub_x), int(sub_y)), int(sub_radius_hover), int(sub_radius_hover))
+
+            # Draw icon
+            icon_color = QColor(40, 40, 40, 220)
+            self._draw_icon(painter, sub_x, sub_y, sub_radius * 0.5, self.sub_items[j].id, icon_color)
 
     def _draw_icon(self, painter, cx, cy, size, item_id, color):
         """Draw a custom icon based on the item type"""
@@ -424,6 +484,49 @@ class RadialMenu(QWidget):
             painter.drawEllipse(QPoint(int(cx), int(cy + size * 0.1)), int(size * 0.1), int(size * 0.1))
             painter.drawLine(int(cx), int(cy + size * 0.1), int(cx), int(cy + size * 0.3))
 
+        elif item_id == "apps":
+            # Grid of 4 squares (app launcher icon)
+            sq = size * 0.35
+            gap = size * 0.1
+            for dx in [-1, 1]:
+                for dy in [-1, 1]:
+                    sx = cx + dx * (sq/2 + gap/2)
+                    sy = cy + dy * (sq/2 + gap/2)
+                    painter.drawRect(int(sx - sq/2), int(sy - sq/2), int(sq), int(sq))
+
+        elif item_id == "obsidian":
+            # Crystal/gem shape
+            painter.drawPolygon([
+                QPoint(int(cx), int(cy - size * 0.6)),
+                QPoint(int(cx + size * 0.5), int(cy - size * 0.2)),
+                QPoint(int(cx + size * 0.3), int(cy + size * 0.5)),
+                QPoint(int(cx - size * 0.3), int(cy + size * 0.5)),
+                QPoint(int(cx - size * 0.5), int(cy - size * 0.2)),
+            ])
+
+        elif item_id == "antigravity":
+            # Up arrow (anti-gravity)
+            painter.drawLine(int(cx), int(cy + size * 0.4), int(cx), int(cy - size * 0.4))
+            painter.drawLine(int(cx - size * 0.4), int(cy), int(cx), int(cy - size * 0.4))
+            painter.drawLine(int(cx + size * 0.4), int(cy), int(cx), int(cy - size * 0.4))
+
+        elif item_id == "zen":
+            # Z letter
+            painter.drawLine(int(cx - size * 0.4), int(cy - size * 0.4), int(cx + size * 0.4), int(cy - size * 0.4))
+            painter.drawLine(int(cx + size * 0.4), int(cy - size * 0.4), int(cx - size * 0.4), int(cy + size * 0.4))
+            painter.drawLine(int(cx - size * 0.4), int(cy + size * 0.4), int(cx + size * 0.4), int(cy + size * 0.4))
+
+        elif item_id == "zapzap":
+            # Lightning bolt
+            painter.drawPolygon([
+                QPoint(int(cx + size * 0.3), int(cy - size * 0.5)),
+                QPoint(int(cx - size * 0.1), int(cy)),
+                QPoint(int(cx + size * 0.2), int(cy)),
+                QPoint(int(cx - size * 0.2), int(cy + size * 0.5)),
+                QPoint(int(cx + size * 0.1), int(cy)),
+                QPoint(int(cx - size * 0.3), int(cy)),
+            ])
+
     def _create_segment_path(self, cx, cy, inner_r, outer_r, start_angle, end_angle):
         """Create a pie segment path"""
         from PyQt6.QtGui import QPainterPath
@@ -464,30 +567,81 @@ class RadialMenu(QWidget):
 
         if dist_to_center < 25:
             self.hovered_index = -2  # Special value for center
+            self.expanded_index = -1  # Collapse any expanded menu
+            self.sub_hovered_index = -1
             self.update()
             return
 
         # Check distance to each dot
         num_items = len(self.items)
         angle_per_dot = 360 / num_items
-        spread = 140
+        spread = 112
 
         self.hovered_index = -1
+        self.sub_hovered_index = -1
 
+        # First: find which main item is hovered
+        hovered_main_index = -1
         for i in range(num_items):
             angle = i * angle_per_dot - 90
             dot_x = cx + spread * math.cos(math.radians(angle))
             dot_y = cy + spread * math.sin(math.radians(angle))
 
-            # Check if mouse is near this dot
             dx = pos.x() - dot_x
             dy = pos.y() - dot_y
             distance = (dx ** 2 + dy ** 2) ** 0.5
 
             if distance < 50:  # Larger hit area for bigger dots
-                self.hovered_index = i
+                hovered_main_index = i
                 break
 
+        self.hovered_index = hovered_main_index
+
+        # Second: if apps is hovered, expand it
+        if hovered_main_index >= 0 and self.items[hovered_main_index].id == "apps":
+            self.expanded_index = hovered_main_index
+
+        # Third: check if hovering over sub-items of expanded menu
+        if self.expanded_index >= 0:
+            num_sub = len(self.sub_items)
+            sub_spacing = 65
+
+            # Get the parent position of the expanded apps item
+            expanded_angle = self.expanded_index * angle_per_dot - 90
+            parent_x = cx + spread * math.cos(math.radians(expanded_angle))
+            parent_y = cy + spread * math.sin(math.radians(expanded_angle))
+
+            # Perpendicular direction (sideways from the radial direction)
+            perp_angle = expanded_angle + 90
+            direction_x = math.cos(math.radians(perp_angle))
+            direction_y = math.sin(math.radians(perp_angle))
+
+            # Center the sub-items around the parent
+            total_width = (num_sub - 1) * sub_spacing
+            start_offset = -total_width / 2
+
+            for j in range(num_sub):
+                offset = start_offset + j * sub_spacing
+                sub_x = parent_x + offset * direction_x
+                sub_y = parent_y + offset * direction_y
+
+                dx_sub = pos.x() - sub_x
+                dy_sub = pos.y() - sub_y
+                dist_sub = (dx_sub ** 2 + dy_sub ** 2) ** 0.5
+
+                if dist_sub < 35:  # Hit area for sub-items
+                    self.sub_hovered_index = j
+                    break
+
+            # If not hovering over sub-items AND not hovering over the parent, collapse
+            if self.sub_hovered_index < 0 and hovered_main_index != self.expanded_index:
+                dx_parent = pos.x() - parent_x
+                dy_parent = pos.y() - parent_y
+                dist_parent = (dx_parent ** 2 + dy_parent ** 2) ** 0.5
+                if dist_parent > 60:  # Far from parent, collapse
+                    self.expanded_index = -1
+
+        # Debug: print state when apps is hovered or expanded
         self.update()
 
     def mousePressEvent(self, event):
@@ -517,9 +671,22 @@ class RadialMenu(QWidget):
             self.cleanup_and_close()
             return
 
+        # Check if clicking on a sub-item first
+        if self.sub_hovered_index >= 0 and self.expanded_index >= 0:
+            self.execute_action(self.sub_items[self.sub_hovered_index])
+            self.cleanup_and_close()
+            return
+
         # Clicking outside all items closes it
         if self.hovered_index < 0:
             self.cleanup_and_close()
+            return
+
+        # Check if clicking on the apps menu item (which shouldn't execute, just expand)
+        if self.items[self.hovered_index].id == "apps":
+            # Just expand it, don't close
+            self.expanded_index = self.hovered_index
+            self.update()
             return
 
         self.selected_index = self.hovered_index
