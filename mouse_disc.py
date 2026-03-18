@@ -81,6 +81,9 @@ class MouseDiscWindow(QWidget):
         # Menu stack: [main, submenu1, submenu2, ...]
         self.menu_stack: List[MenuLevel] = []
 
+        # Brightness level (0.0 to 1.0) for the controls bar
+        self.brightness_level = 1.0
+
         # Use provided cursor position (from hyprland) or try to get from Qt
         if cursor_x != 0 or cursor_y != 0:
             self.disc_center = QPoint(cursor_x, cursor_y)
@@ -236,6 +239,29 @@ class MouseDiscWindow(QWidget):
         except Exception:
             pass
 
+        # Check brightness state
+        try:
+            result = subprocess.run(
+                ["brightnessctl", "get"],
+                capture_output=True,
+                text=True,
+                timeout=1
+            )
+            if result.returncode == 0:
+                current = int(result.stdout.strip())
+                # Get max brightness
+                max_result = subprocess.run(
+                    ["brightnessctl", "max"],
+                    capture_output=True,
+                    text=True,
+                    timeout=1
+                )
+                if max_result.returncode == 0:
+                    max_val = int(max_result.stdout.strip())
+                    self.brightness_level = current / max_val
+        except Exception:
+            pass
+
     def _update_toggle_state(self, item_id: str, state: bool):
         """Update toggle state in config items"""
         def update_in_items(items):
@@ -304,6 +330,10 @@ class MouseDiscWindow(QWidget):
             total_span = (num_items - 1) * angle_per_item
             start_angle = menu.parent_angle - total_span / 2
 
+        # Draw curved bar for controls submenu
+        if menu.level > 0 and menu.parent_item and menu.parent_item.id == "controls":
+            self._draw_controls_bar(painter, menu, cx, cy, start_angle, angle_per_item, num_items, style)
+
         for i, item in enumerate(menu.items):
             angle = start_angle + i * angle_per_item
             if menu.level == 0:
@@ -337,6 +367,56 @@ class MouseDiscWindow(QWidget):
             # Draw icon
             icon_color = QColor(self.config.colors.get("icon", "#282828"))
             draw_icon(painter, dot_x, dot_y, style.dot_radius * 0.5, item.id, icon_color)
+
+    def _draw_controls_bar(self, painter: QPainter, menu: MenuLevel, cx: float, cy: float,
+                           start_angle: float, angle_per_item: float, num_items: int, style):
+        """Draw a curved brightness bar hugging the controls submenu items (outside the buttons)"""
+        # Bar at 150% of submenu distance from center (outside the buttons)
+        bar_radius = style.spread_radius * 1.5
+
+        # Calculate angles for first and last item (in my angle system: 0=right, positive=clockwise)
+        first_angle = start_angle
+        last_angle = start_angle + (num_items - 1) * angle_per_item
+
+        # Qt system: 0=right, positive=counter-clockwise
+        qt_start_angle = -last_angle
+        qt_end_angle = -first_angle
+        qt_span = qt_end_angle - qt_start_angle
+
+        # Draw the curved bar as a thick arc
+        bar_thickness = style.dot_radius * 0.9
+        empty_color = QColor(self.config.colors.get("controls_bar_empty", "#3a3a3a"))
+        fill_color = QColor(self.config.colors.get("controls_bar_fill", "#ffffff"))
+
+        rect_size = bar_radius * 2
+
+        # Calculate brightness span (fills from top downward)
+        # At 100% brightness, white should fill from top (wifi) to bottom (mute_mic)
+        # At 0% brightness, all dark gray
+        brightness_span = qt_span * self.brightness_level
+        empty_span = qt_span - brightness_span
+
+        # Draw filled portion (white, from top/qt_start_angle downward)
+        if brightness_span > 0:
+            pen = QPen(fill_color, bar_thickness)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            painter.drawArc(
+                int(cx - bar_radius), int(cy - bar_radius),
+                int(rect_size), int(rect_size),
+                int(qt_start_angle * 16), int(brightness_span * 16)
+            )
+
+        # Draw empty portion (dark gray, from end of white to bottom)
+        if empty_span > 0:
+            pen = QPen(empty_color, bar_thickness)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            painter.drawArc(
+                int(cx - bar_radius), int(cy - bar_radius),
+                int(rect_size), int(rect_size),
+                int((qt_start_angle + brightness_span) * 16), int(empty_span * 16)
+            )
 
     def _draw_center_close(self, painter: QPainter, cx: float, cy: float):
         """Draw center close button"""
@@ -419,11 +499,121 @@ class MouseDiscWindow(QWidget):
                 break
 
         if not handled:
-            # Check if we're in corridor between menu levels
-            # If not, collapse submenus
-            pass  # Keep submenus open for now (corridor logic can be added)
+            # Check if hovering over controls brightness bar
+            brightness_hover = self._check_brightness_bar_hover(pos.x(), pos.y(), cx, cy)
+            if brightness_hover:
+                self.update()
+                return
 
         self.update()
+
+    def _check_brightness_bar_hover(self, px: float, py: float, cx: float, cy: float) -> bool:
+        """Check if mouse is over the controls brightness bar and update brightness level"""
+        # Only check if controls submenu is open
+        controls_menu = None
+        for menu in self.menu_stack:
+            if menu.level > 0 and menu.parent_item and menu.parent_item.id == "controls":
+                controls_menu = menu
+                break
+
+        if not controls_menu:
+            return False
+
+        style = controls_menu.get_style(self.config)
+        num_items = len(controls_menu.items)
+        if num_items == 0:
+            return False
+
+        # Calculate bar geometry
+        bar_radius = style.spread_radius * 1.5
+        bar_thickness = style.dot_radius * 0.9
+
+        # Calculate angles
+        main_items = len(self.menu_stack[0].items)
+        angle_per_item = 360 / main_items * style.sub_spacing_factor
+        total_span = (num_items - 1) * angle_per_item
+        start_angle = controls_menu.parent_angle - total_span / 2
+        first_angle = start_angle
+        last_angle = start_angle + (num_items - 1) * angle_per_item
+
+        # Check if mouse is near the bar radius
+        dx = px - cx
+        dy = py - cy
+        dist_from_center = (dx ** 2 + dy ** 2) ** 0.5
+
+        # Mouse angle (in my coordinate system: 0=right, clockwise)
+        mouse_angle = math.degrees(math.atan2(dy, dx))
+        if mouse_angle < 0:
+            mouse_angle += 360
+
+        # Check if within bar thickness
+        if abs(dist_from_center - bar_radius) > bar_thickness * 0.6:
+            return False
+
+        # Check if within angle range (with some padding)
+        angle_padding = 10  # degrees
+        # Normalize angles to 0-360 for comparison
+        def normalize_angle(a):
+            while a < 0:
+                a += 360
+            while a >= 360:
+                a -= 360
+            return a
+
+        norm_first = normalize_angle(first_angle)
+        norm_last = normalize_angle(last_angle)
+        norm_mouse = normalize_angle(mouse_angle)
+
+        # Check if mouse is within the arc range
+        if norm_first <= norm_last:
+            in_range = norm_first - angle_padding <= norm_mouse <= norm_last + angle_padding
+        else:
+            # Arc crosses 0/360 boundary
+            in_range = (norm_mouse >= norm_first - angle_padding or
+                       norm_mouse <= norm_last + angle_padding)
+
+        if not in_range:
+            return False
+
+        # Calculate brightness based on position along the arc
+        # White fills from top (wifi/first_angle) downward
+        # 100% brightness = all white from top to bottom
+        # 0% brightness = all dark gray
+        if norm_first <= norm_last:
+            if norm_first <= norm_mouse <= norm_last:
+                # 1.0 at first (top/wifi), 0.0 at last (bottom/mute_mic)
+                self.brightness_level = (norm_last - norm_mouse) / (norm_last - norm_first)
+            else:
+                if norm_mouse < norm_first:
+                    self.brightness_level = 1.0
+                else:
+                    self.brightness_level = 0.0
+        else:
+            # Crosses boundary
+            if norm_mouse >= norm_first:
+                self.brightness_level = (norm_last + 360 - norm_mouse) / (norm_last + 360 - norm_first)
+            elif norm_mouse <= norm_last:
+                self.brightness_level = (norm_last - norm_mouse) / (norm_last + 360 - norm_first)
+            else:
+                self.brightness_level = 0.5
+
+        # Clamp to valid range
+        self.brightness_level = max(0.0, min(1.0, self.brightness_level))
+        return True
+
+    def _check_brightness_bar_click(self, px: float, py: float, cx: float, cy: float) -> bool:
+        """Check if mouse click is on the brightness bar (for setting brightness)"""
+        # Use the same logic as hover detection
+        return self._check_brightness_bar_hover(px, py, cx, cy)
+
+    def _apply_brightness(self):
+        """Apply the current brightness level to the system"""
+        try:
+            brightness_percent = int(self.brightness_level * 100)
+            subprocess.run(["brightnessctl", "set", f"{brightness_percent}%"], check=False)
+        except Exception as e:
+            print(f"Error setting brightness: {e}")
+        # Keep menu open
 
     def _expand_submenu(self, parent_menu_idx: int, child_idx: int, angle: float, item: DiscItem):
         """Expand a submenu"""
@@ -503,6 +693,11 @@ class MouseDiscWindow(QWidget):
         dy = pos.y() - cy
         if (dx ** 2 + dy ** 2) ** 0.5 < self.config.settings.get("close_hit_radius", 25):
             self.close()
+            return
+
+        # Check if clicked on brightness bar to apply brightness
+        if self._check_brightness_bar_click(pos.x(), pos.y(), cx, cy):
+            self._apply_brightness()
             return
 
         # Check from deepest menu to shallowest

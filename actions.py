@@ -91,6 +91,10 @@ class ActionExecutor:
                 subprocess.run(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "0" if new_state else "1"])
             elif item.id == "mute_mic":
                 subprocess.run(["pactl", "set-source-mute", "@DEFAULT_SOURCE@", "0" if new_state else "1"])
+            elif item.id == "brightness":
+                # Toggle between 100% and 30% brightness
+                brightness = "1.0" if new_state else "0.3"
+                subprocess.run(["brightnessctl", "set", brightness])
             else:
                 # Generic toggle - just notify, actual implementation can be added
                 print(f"Toggle {item.id}: {new_state}")

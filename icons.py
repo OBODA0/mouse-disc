@@ -1,4 +1,5 @@
 """Icon drawing functions for Mouse Disc"""
+import math
 from PyQt6.QtGui import QPainter, QPen, QColor
 from PyQt6.QtCore import Qt, QPoint
 
@@ -27,6 +28,7 @@ def draw_icon(painter: QPainter, cx: float, cy: float, size: float, item_id: str
         "bluetooth": _draw_bluetooth,
         "mute_speakers": _draw_mute_speakers,
         "mute_mic": _draw_mute_mic,
+        "brightness": _draw_brightness,
     }
 
     drawer = icon_drawers.get(item_id, _draw_unknown)
@@ -187,6 +189,24 @@ def _draw_mute_mic(painter, cx, cy, size, color):
     painter.drawArc(int(cx - size * 0.3), int(cy - size * 0.1), int(size * 0.6), int(size * 0.4), 0, 180 * 16)
     # Slash through mic
     painter.drawLine(int(cx - size * 0.4), int(cy - size * 0.4), int(cx + size * 0.4), int(cy + size * 0.4))
+
+
+def _draw_brightness(painter, cx, cy, size, color):
+    # Sun icon with rays
+    # Center circle
+    painter.setBrush(color)
+    painter.drawEllipse(QPoint(int(cx), int(cy)), int(size * 0.25), int(size * 0.25))
+    # Rays
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    ray_len = size * 0.45
+    ray_inner = size * 0.35
+    for angle_deg in range(0, 360, 45):
+        rad = math.radians(angle_deg)
+        x1 = cx + ray_inner * math.cos(rad)
+        y1 = cy + ray_inner * math.sin(rad)
+        x2 = cx + ray_len * math.cos(rad)
+        y2 = cy + ray_len * math.sin(rad)
+        painter.drawLine(int(x1), int(y1), int(x2), int(y2))
 
 
 def _draw_unknown(painter, cx, cy, size, color):
