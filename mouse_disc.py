@@ -390,24 +390,13 @@ class MouseDiscWindow(QWidget):
 
         rect_size = bar_radius * 2
 
-        # Calculate brightness span (fills from top downward)
-        # At 100% brightness, white should fill from top (wifi) to bottom (mute_mic)
-        # At 0% brightness, all dark gray
+        # Calculate brightness span (fills from bottom upward)
+        # At 0% brightness: all dark gray (bottom)
+        # At 100% brightness: all white (top)
         brightness_span = qt_span * self.brightness_level
         empty_span = qt_span - brightness_span
 
-        # Draw filled portion (white, from top/qt_start_angle downward)
-        if brightness_span > 0:
-            pen = QPen(fill_color, bar_thickness)
-            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-            painter.setPen(pen)
-            painter.drawArc(
-                int(cx - bar_radius), int(cy - bar_radius),
-                int(rect_size), int(rect_size),
-                int(qt_start_angle * 16), int(brightness_span * 16)
-            )
-
-        # Draw empty portion (dark gray, from end of white to bottom)
+        # Draw empty portion (dark gray, from bottom/qt_start_angle upward)
         if empty_span > 0:
             pen = QPen(empty_color, bar_thickness)
             pen.setCapStyle(Qt.PenCapStyle.RoundCap)
@@ -415,7 +404,18 @@ class MouseDiscWindow(QWidget):
             painter.drawArc(
                 int(cx - bar_radius), int(cy - bar_radius),
                 int(rect_size), int(rect_size),
-                int((qt_start_angle + brightness_span) * 16), int(empty_span * 16)
+                int(qt_start_angle * 16), int(empty_span * 16)
+            )
+
+        # Draw filled portion (white, from end of empty to top)
+        if brightness_span > 0:
+            pen = QPen(fill_color, bar_thickness)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            painter.drawArc(
+                int(cx - bar_radius), int(cy - bar_radius),
+                int(rect_size), int(rect_size),
+                int((qt_start_angle + empty_span) * 16), int(brightness_span * 16)
             )
 
     def _draw_center_close(self, painter: QPainter, cx: float, cy: float):
@@ -576,24 +576,24 @@ class MouseDiscWindow(QWidget):
             return False
 
         # Calculate brightness based on position along the arc
-        # White fills from top (wifi/first_angle) downward
-        # 100% brightness = all white from top to bottom
-        # 0% brightness = all dark gray
+        # White fills from bottom to top
+        # Bottom (first_angle/wifi) = 0% brightness
+        # Top (last_angle/mute_mic) = 100% brightness
         if norm_first <= norm_last:
             if norm_first <= norm_mouse <= norm_last:
-                # 1.0 at first (top/wifi), 0.0 at last (bottom/mute_mic)
-                self.brightness_level = (norm_last - norm_mouse) / (norm_last - norm_first)
+                # 0.0 at first (bottom/wifi), 1.0 at last (top/mute_mic)
+                self.brightness_level = (norm_mouse - norm_first) / (norm_last - norm_first)
             else:
                 if norm_mouse < norm_first:
-                    self.brightness_level = 1.0
-                else:
                     self.brightness_level = 0.0
+                else:
+                    self.brightness_level = 1.0
         else:
             # Crosses boundary
             if norm_mouse >= norm_first:
-                self.brightness_level = (norm_last + 360 - norm_mouse) / (norm_last + 360 - norm_first)
+                self.brightness_level = (norm_mouse - norm_first) / (norm_last + 360 - norm_first)
             elif norm_mouse <= norm_last:
-                self.brightness_level = (norm_last - norm_mouse) / (norm_last + 360 - norm_first)
+                self.brightness_level = (norm_mouse + 360 - norm_first) / (norm_last + 360 - norm_first)
             else:
                 self.brightness_level = 0.5
 
