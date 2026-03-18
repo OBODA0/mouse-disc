@@ -102,17 +102,31 @@ class RadialMenu(QWidget):
             DiscItem("screenshot", "", "", "grim -g $(slurp) ~/Pictures/$(date +%Y%m%d_%H%M%S).png", "command", "#e8e8e8"),
             DiscItem("lock", "", "", "hyprlock", "command", "#e8e8e8"),
             DiscItem("apps", "", "", "", "menu", "#e8e8e8"),  # Expands to show apps - LEFT
-            DiscItem("close_win", "", "", "kill", "hyprland", "#e8e8e8"),
+            DiscItem("controls", "", "", "", "menu", "#e8e8e8"),  # Controls - TOP LEFT
         ]
 
         # Sub-menu for apps
-        self.sub_items = [
-            DiscItem("obsidian", "", "", "obsidian", "app", "#e8e8e8"),
-            DiscItem("antigravity", "", "", "antigravity", "app", "#e8e8e8"),
-            DiscItem("zen", "", "", "zen-browser", "app", "#e8e8e8"),
-            DiscItem("zapzap", "", "", "zapzap", "app", "#e8e8e8"),
-        ]
-        self.expanded_index = -1  # Which item is expanded
+        self.sub_items = {
+            "apps": [
+                DiscItem("obsidian", "", "", "obsidian", "app", "#e8e8e8"),
+                DiscItem("antigravity", "", "", "antigravity", "app", "#e8e8e8"),
+                DiscItem("zen", "", "", "zen-browser", "app", "#e8e8e8"),
+                DiscItem("zapzap", "", "", "zapzap", "app", "#e8e8e8"),
+            ],
+            "controls": [
+                DiscItem("wifi", "", "", "wifi", "toggle", "#e8e8e8"),  # Toggleable
+                DiscItem("bluetooth", "", "", "bluetooth", "toggle", "#e8e8e8"),  # Toggleable
+            ]
+        }
+
+        # Track toggle states for controls
+        self.toggle_states = {
+            "wifi": False,
+            "bluetooth": False,
+        }
+
+        self.expanded_menu = None  # Which menu is expanded ("apps" or "controls")
+        self.expanded_index = -1  # Which item index is expanded
         self.sub_hovered_index = -1  # Which sub-item is hovered
 
         if Path(self.config_path).exists():
@@ -328,10 +342,11 @@ class RadialMenu(QWidget):
             self._draw_dot(painter, dot_x, dot_y, dot_radius, color, glow,
                           item_id=item.id)
 
-            # If apps menu is expanded, draw sub-items
-            if self.expanded_index >= 0 and self.items[self.expanded_index].id == "apps":
-                if i == self.expanded_index:
-                    self._draw_sub_items(painter, dot_x, dot_y, angle)
+            # If any menu is expanded, draw sub-items
+            if self.expanded_index >= 0 and i == self.expanded_index:
+                menu_type = self.items[self.expanded_index].id
+                if menu_type in self.sub_items:
+                    self._draw_sub_items(painter, dot_x, dot_y, angle, menu_type)
 
     def _draw_dot(self, painter, x, y, radius, color, glow_color, label="", item_id=""):
         """Draw a single dot with custom icon - no glow effect"""
@@ -348,11 +363,12 @@ class RadialMenu(QWidget):
         icon_color = QColor(40, 40, 40, 220) if color.lightness() > 150 else QColor(255, 255, 255, 220)
         self._draw_icon(painter, x, y, radius * 0.5, item_id, icon_color)
 
-    def _draw_sub_items(self, painter, parent_x, parent_y, parent_angle):
+    def _draw_sub_items(self, painter, parent_x, parent_y, parent_angle, menu_type):
         """Draw sub-menu items arranged on a larger arc at double the distance"""
         import math
 
-        num_sub = len(self.sub_items)
+        items = self.sub_items.get(menu_type, [])
+        num_sub = len(items)
         sub_radius = 35  # Same size as main tabs
 
         # Sub-items are on a circle at double the distance from center
@@ -369,6 +385,7 @@ class RadialMenu(QWidget):
         start_angle = parent_angle - total_span / 2
 
         for j in range(num_sub):
+            item = items[j]
             # Calculate angle for this sub-item using reduced step
             sub_angle = start_angle + j * sub_angle_step
 
@@ -376,13 +393,22 @@ class RadialMenu(QWidget):
             sub_x = self.disc_center.x() - self.screen_rect.x() + sub_spread * math.cos(math.radians(sub_angle))
             sub_y = self.disc_center.y() - self.screen_rect.y() + sub_spread * math.sin(math.radians(sub_angle))
 
-            # Hover effect
+            # Check toggle state for color
+            is_toggled = self.toggle_states.get(item.id, False)
+
+            # Hover effect and toggle state
             if j == self.sub_hovered_index:
                 sub_radius_hover = sub_radius + 5  # Same hover effect as main
-                color = QColor(255, 255, 255, 255)
+                if is_toggled:
+                    color = QColor(255, 80, 80, 255)  # Red when toggled ON and hovered
+                else:
+                    color = QColor(255, 255, 255, 255)
             else:
                 sub_radius_hover = sub_radius
-                color = QColor(232, 232, 232, 220)
+                if is_toggled:
+                    color = QColor(220, 60, 60, 255)  # Red when toggled ON
+                else:
+                    color = QColor(232, 232, 232, 220)
 
             # Draw sub dot
             painter.setPen(Qt.PenStyle.NoPen)
@@ -391,7 +417,7 @@ class RadialMenu(QWidget):
 
             # Draw icon
             icon_color = QColor(40, 40, 40, 220)
-            self._draw_icon(painter, sub_x, sub_y, sub_radius * 0.5, self.sub_items[j].id, icon_color)
+            self._draw_icon(painter, sub_x, sub_y, sub_radius * 0.5, item.id, icon_color)
 
     def _draw_icon(self, painter, cx, cy, size, item_id, color):
         """Draw a custom icon based on the item type"""
@@ -498,6 +524,34 @@ class RadialMenu(QWidget):
                     sy = cy + dy * (sq/2 + gap/2)
                     painter.drawRect(int(sx - sq/2), int(sy - sq/2), int(sq), int(sq))
 
+        elif item_id == "controls":
+            # Sliders/controls icon
+            # Two vertical sliders
+            for sx in [cx - size * 0.25, cx + size * 0.25]:
+                # Slider track
+                painter.drawLine(int(sx), int(cy - size * 0.4), int(sx), int(cy + size * 0.4))
+                # Slider knob
+                knob_y = cy + (0.2 if sx < cx else -0.2) * size
+                painter.drawRect(int(sx - size * 0.1), int(knob_y - size * 0.08), int(size * 0.2), int(size * 0.16))
+
+        elif item_id == "wifi":
+            # WiFi signal icon
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            # Arcs for signal strength
+            for i, r in enumerate([0.2, 0.4, 0.6]):
+                painter.drawArc(int(cx - size * r), int(cy - size * r), int(size * r * 2), int(size * r * 2), 45 * 16, 90 * 16)
+            # Dot at bottom
+            painter.setBrush(color)
+            painter.drawEllipse(QPoint(int(cx), int(cy + size * 0.65)), int(size * 0.12), int(size * 0.12))
+
+        elif item_id == "bluetooth":
+            # Bluetooth rune symbol
+            painter.drawLine(int(cx), int(cy - size * 0.5), int(cx), int(cy + size * 0.5))
+            painter.drawLine(int(cx - size * 0.3), int(cy - size * 0.25), int(cx), int(cy))
+            painter.drawLine(int(cx - size * 0.3), int(cy + size * 0.25), int(cx), int(cy))
+            painter.drawLine(int(cx), int(cy), int(cx + size * 0.3), int(cy - size * 0.25))
+            painter.drawLine(int(cx), int(cy), int(cx + size * 0.3), int(cy + size * 0.25))
+
         elif item_id == "obsidian":
             # Crystal/gem shape
             painter.drawPolygon([
@@ -603,7 +657,9 @@ class RadialMenu(QWidget):
 
         # Handle expanded menu hover zone
         if self.expanded_index >= 0:
-            num_sub = len(self.sub_items)
+            menu_type = self.items[self.expanded_index].id
+            current_sub_items = self.sub_items.get(menu_type, [])
+            num_sub = len(current_sub_items)
             sub_spread = 224  # Double the main spread
 
             # Get the parent angle and position
@@ -615,7 +671,7 @@ class RadialMenu(QWidget):
             num_main = len(self.items)
             main_angle_step = 360 / num_main
             sub_angle_step = main_angle_step * 0.6
-            total_span = (num_sub - 1) * sub_angle_step
+            total_span = (num_sub - 1) * sub_angle_step if num_sub > 0 else 0
             start_angle = expanded_angle - total_span / 2
 
             sub_positions = []
@@ -693,9 +749,11 @@ class RadialMenu(QWidget):
                 self.expanded_index = -1
                 self.sub_hovered_index = -1
 
-        # If apps is hovered, expand it
-        if hovered_main_index >= 0 and self.items[hovered_main_index].id == "apps":
-            self.expanded_index = hovered_main_index
+        # If apps or controls is hovered, expand it
+        if hovered_main_index >= 0:
+            item_id = self.items[hovered_main_index].id
+            if item_id in self.sub_items:
+                self.expanded_index = hovered_main_index
 
         # Debug: print state when apps is hovered or expanded
         self.update()
@@ -729,17 +787,28 @@ class RadialMenu(QWidget):
 
         # Check if clicking on a sub-item first
         if self.sub_hovered_index >= 0 and self.expanded_index >= 0:
-            self.execute_action(self.sub_items[self.sub_hovered_index])
-            self.cleanup_and_close()
-            return
+            menu_type = self.items[self.expanded_index].id
+            sub_item = self.sub_items[menu_type][self.sub_hovered_index]
+            if sub_item.action_type == "toggle":
+                # Toggle the state and don't close
+                self.toggle_states[sub_item.id] = not self.toggle_states.get(sub_item.id, False)
+                # Execute the toggle action
+                self.execute_action(sub_item)
+                self.update()
+                return
+            else:
+                self.execute_action(sub_item)
+                self.cleanup_and_close()
+                return
 
         # Clicking outside all items closes it
         if self.hovered_index < 0:
             self.cleanup_and_close()
             return
 
-        # Check if clicking on the apps menu item (which shouldn't execute, just expand)
-        if self.items[self.hovered_index].id == "apps":
+        # Check if clicking on a menu item (which shouldn't execute, just expand)
+        item_id = self.items[self.hovered_index].id
+        if item_id in self.sub_items:
             # Just expand it, don't close
             self.expanded_index = self.hovered_index
             self.update()
@@ -783,6 +852,19 @@ class RadialMenu(QWidget):
                 elif item.action.startswith("volume"):
                     change = item.action.split()[1] if " " in item.action else "5%"
                     subprocess.run(["pactl", "set-sink-volume", "@DEFAULT_SINK@", change])
+            elif item.action_type == "toggle":
+                # Handle toggle actions
+                is_enabled = self.toggle_states.get(item.id, False)
+                if item.id == "wifi":
+                    if is_enabled:
+                        subprocess.run(["nmcli", "radio", "wifi", "on"])
+                    else:
+                        subprocess.run(["nmcli", "radio", "wifi", "off"])
+                elif item.id == "bluetooth":
+                    if is_enabled:
+                        subprocess.run(["bluetoothctl", "power", "on"])
+                    else:
+                        subprocess.run(["bluetoothctl", "power", "off"])
         except Exception as e:
             print(f"Error executing action: {e}")
 
