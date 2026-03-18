@@ -26,7 +26,7 @@ sudo pacman -S python-pyqt6
 
 ### Run directly:
 ```bash
-python3 mouse_disc.py
+python3 main.py
 ```
 
 ### With middle-click activation (Hyprland):
@@ -35,10 +35,10 @@ Add to your `hyprland.conf`:
 
 ```conf
 # For keyboard shortcut
-bind = $mainMod, M, exec, python3 ~/Projects/mouse-disc/mouse_disc.py --show
+bind = $mainMod, M, exec, python3 ~/Projects/mouse-disc/main.py --show
 
 # For mouse button (requires xmouseless or similar)
-bind = , mouse:274, exec, python3 ~/Projects/mouse-disc/mouse_disc.py --show
+bind = , mouse:274, exec, python3 ~/Projects/mouse-disc/main.py --show
 ```
 
 Or use the provided window rules in `hyprland-integration.conf`.
@@ -89,7 +89,7 @@ Edit `~/.config/mouse-disc/config.json`:
 Add to your Hyprland startup:
 
 ```conf
-exec-once = python3 ~/Projects/mouse-disc/mouse_disc.py
+exec-once = python3 ~/Projects/mouse-disc/main.py
 ```
 
 ## License
