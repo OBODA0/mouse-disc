@@ -1,69 +1,97 @@
-#!/usr/bin/env python3
 """
-Mouse Disc - A radial menu for Hyprland/Linux
-Appears on middle mouse click for quick shortcuts
+Mouse Disc - Radial menu for Hyprland
+Middle-click to open, hover to select
 """
-
 import sys
-import json
-import os
+import math
 import subprocess
+import fcntl
 from pathlib import Path
-from dataclasses import dataclass
-from typing import List, Callable, Optional
+from typing import List, Tuple, Optional
 
-from PyQt6.QtWidgets import QApplication, QWidget, QGraphicsDropShadowEffect
-from PyQt6.QtCore import Qt, QTimer, QPoint, QRectF, pyqtSignal, QPropertyAnimation, QEasingCurve, QParallelAnimationGroup
-from PyQt6.QtGui import QPainter, QColor, QRadialGradient, QFont, QFontDatabase, QCursor, QIcon, QAction, QShortcut, QKeySequence, QPen
+from PyQt6.QtWidgets import QApplication, QWidget, QSystemTrayIcon, QMenu
+from PyQt6.QtGui import QPainter, QColor, QPen, QAction, QCursor, QIcon, QFont
+from PyQt6.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve, QTimer
 
-
-@dataclass
-class DiscItem:
-    """A single item on the disc"""
-    id: str
-    label: str
-    icon: str
-    action: str
-    action_type: str  # "command", "app", "hyprland", "media"
-    color: str = "#5a5a5a"
+from config import ConfigManager, DiscItem, MenuStyle
+from icons import draw_icon
+from actions import ActionExecutor
 
 
-class RadialMenu(QWidget):
-    """The radial/pie menu widget"""
+class SingleInstanceLock:
+    """Ensure only one instance of the menu is running"""
+    def __init__(self, lock_path: str = "/tmp/mouse-disc.lock"):
+        self.lock_path = Path(lock_path)
+        self.lock_file = None
 
-    def __init__(self, config_path: str = None):
+    def acquire(self) -> bool:
+        """Try to acquire lock. Returns True if successful, False if already locked."""
+        self.lock_file = open(self.lock_path, 'w')
+        try:
+            fcntl.flock(self.lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except IOError:
+            self.lock_file.close()
+            self.lock_file = None
+            return False
+
+    def release(self):
+        """Release the lock"""
+        if self.lock_file:
+            fcntl.flock(self.lock_file, fcntl.LOCK_UN)
+            self.lock_file.close()
+            self.lock_file = None
+        if self.lock_path.exists():
+            try:
+                self.lock_path.unlink()
+            except:
+                pass
+
+
+class MenuLevel:
+    """Represents one level of menu (main or submenu)"""
+    def __init__(self, items: List[DiscItem], parent_angle: float = 0,
+                 level: int = 0, parent_item: Optional[DiscItem] = None):
+        self.items = items
+        self.parent_angle = parent_angle  # Angle of parent (for submenus)
+        self.level = level  # 0 = main, 1 = first submenu, etc.
+        self.parent_item = parent_item
+        self.hovered_index = -1
+        self.expanded_child = None  # Which child submenu is expanded
+
+    def get_style(self, config) -> MenuStyle:
+        """Get the style for this menu level"""
+        if self.level == 0:
+            return config.main_style
+        else:
+            return config.sub_style
+
+
+class MouseDiscWindow(QWidget):
+    """Main radial menu window"""
+
+    def __init__(self, config_manager: ConfigManager, lock: SingleInstanceLock,
+                 cursor_x: int = 0, cursor_y: int = 0):
         super().__init__()
+        self.config_manager = config_manager
+        self.config = config_manager.config
+        self.executor = ActionExecutor(self._on_toggle_changed)
+        self.lock = lock
 
-        self.config_path = config_path or Path.home() / ".config" / "mouse-disc" / "config.json"
-        self.items: List[DiscItem] = []
-        self.hovered_index: int = -1
-        self.selected_index: int = -1
-        self._animation_progress = 0.0
+        # Menu stack: [main, submenu1, submenu2, ...]
+        self.menu_stack: List[MenuLevel] = []
 
-        # Visual settings
-        self.inner_radius = 40
-        self.outer_radius = 140
-        self.gap_degrees = 2
-        self.font_size = 11
-
-        # Colors
-        self.bg_color = QColor(30, 30, 30, 220)
-        self.border_color = QColor(100, 100, 100, 180)
-        self.hover_color = QColor(80, 80, 80, 240)
-        self.text_color = QColor(255, 255, 255, 255)
-        self.accent_colors = [
-            "#e06c75", "#98c379", "#e5c07b", "#61afef",
-            "#c678dd", "#56b6c2", "#d19a66", "#abb2bf"
-        ]
+        # Use provided cursor position (from hyprland) or try to get from Qt
+        if cursor_x != 0 or cursor_y != 0:
+            self.disc_center = QPoint(cursor_x, cursor_y)
+        else:
+            self.disc_center = QCursor.pos()
 
         self._setup_window()
-        self._load_config()
         self._setup_animations()
-        self._start_workspace_monitor()
 
-        # Sub-menu state (sub_items is set in _load_config)
-        self.expanded_index = -1
-        self.sub_hovered_index = -1
+        # Build initial main menu
+        self._rebuild_menu_stack()
 
     def _setup_window(self):
         """Configure full-screen overlay window"""
@@ -75,808 +103,298 @@ class RadialMenu(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
-        # Full screen size - covers entire monitor
-        screen = QApplication.primaryScreen()
+        # Move window to cover the monitor where the cursor is
+        screen = QApplication.screenAt(self.disc_center)
+        if screen is None:
+            screen = QApplication.primaryScreen()
         self.screen_rect = screen.geometry()
         self.setFixedSize(self.screen_rect.size())
-
-        # Position at top-left of screen
         self.move(self.screen_rect.topLeft())
 
-        # Store cursor position for disc placement
-        self.disc_center = QCursor.pos()
-
-        # Enable mouse tracking
         self.setMouseTracking(True)
-
-        # Start fully transparent to hide any window creation artifacts
         self.setWindowOpacity(0.0)
 
-    def _load_config(self):
-        """Load configuration from file"""
-        default_items = [
-            DiscItem("browser", "", "", "firefox", "app", "#e8e8e8"),
-            DiscItem("terminal", "", "", "kitty", "app", "#e8e8e8"),
-            DiscItem("editor", "", "", "code", "app", "#e8e8e8"),
-            DiscItem("music", "", "", "playerctl play-pause", "command", "#e8e8e8"),
-            DiscItem("screenshot", "", "", "grim -g $(slurp) ~/Pictures/$(date +%Y%m%d_%H%M%S).png", "command", "#e8e8e8"),
-            DiscItem("lock", "", "", "hyprlock", "command", "#e8e8e8"),
-            DiscItem("apps", "", "", "", "menu", "#e8e8e8"),  # Expands to show apps - LEFT
-            DiscItem("controls", "", "", "", "menu", "#e8e8e8"),  # Controls - TOP LEFT
-        ]
-
-        # Sub-menu for apps
-        self.sub_items = {
-            "apps": [
-                DiscItem("obsidian", "", "", "obsidian", "app", "#e8e8e8"),
-                DiscItem("antigravity", "", "", "antigravity", "app", "#e8e8e8"),
-                DiscItem("zen", "", "", "zen-browser", "app", "#e8e8e8"),
-                DiscItem("zapzap", "", "", "zapzap", "app", "#e8e8e8"),
-            ],
-            "controls": [
-                DiscItem("wifi", "", "", "wifi", "toggle", "#e8e8e8"),  # Toggleable
-                DiscItem("bluetooth", "", "", "bluetooth", "toggle", "#e8e8e8"),  # Toggleable
-            ]
-        }
-
-        # Track toggle states for controls
-        self.toggle_states = {
-            "wifi": False,
-            "bluetooth": False,
-        }
-
-        self.expanded_menu = None  # Which menu is expanded ("apps" or "controls")
-        self.expanded_index = -1  # Which item index is expanded
-        self.sub_hovered_index = -1  # Which sub-item is hovered
-
-        if Path(self.config_path).exists():
-            try:
-                with open(self.config_path) as f:
-                    data = json.load(f)
-                    self.items = [
-                        DiscItem(**item) for item in data.get("items", [])
-                    ]
-                    # Update visual settings if provided
-                    settings = data.get("settings", {})
-                    self.inner_radius = settings.get("inner_radius", self.inner_radius)
-                    self.outer_radius = settings.get("outer_radius", self.outer_radius)
-                    self.font_size = settings.get("font_size", self.font_size)
-            except Exception as e:
-                print(f"Error loading config: {e}")
-                self.items = default_items
-        else:
-            self.items = default_items
-            self._save_default_config()
-
-    def _save_default_config(self):
-        """Create default config file"""
-        config_dir = Path(self.config_path).parent
-        config_dir.mkdir(parents=True, exist_ok=True)
-
-        default_config = {
-            "items": [
-                {"id": "browser", "label": "", "icon": "", "action": "firefox", "action_type": "app", "color": "#e8e8e8"},
-                {"id": "terminal", "label": "", "icon": "", "action": "kitty", "action_type": "app", "color": "#e8e8e8"},
-                {"id": "apps", "label": "", "icon": "", "action": "", "action_type": "menu", "color": "#e8e8e8"},
-                {"id": "editor", "label": "", "icon": "", "action": "code", "action_type": "app", "color": "#e8e8e8"},
-                {"id": "music", "label": "", "icon": "", "action": "playerctl play-pause", "action_type": "command", "color": "#e8e8e8"},
-                {"id": "screenshot", "label": "", "icon": "", "action": "grim -g $(slurp) ~/Pictures/$(date +%Y%m%d_%H%M%S).png", "action_type": "command", "color": "#e8e8e8"},
-                {"id": "lock", "label": "", "icon": "", "action": "hyprlock", "action_type": "command", "color": "#e8e8e8"},
-                {"id": "close_win", "label": "", "icon": "", "action": "kill", "action_type": "hyprland", "color": "#e8e8e8"},
-            ],
-            "settings": {
-                "dot_count": 8,
-                "spread_distance": 100,
-                "dot_radius": 12,
-                "animation_duration_ms": 250
-            }
-        }
-
-        with open(self.config_path, 'w') as f:
-            json.dump(default_config, f, indent=2)
-
-    def _start_workspace_monitor(self):
-        """Monitor workspace changes and close when user switches away"""
-        self.initial_workspace = self._get_current_workspace()
-        print(f"DEBUG: Started on workspace {self.initial_workspace}")
-
-        def check_workspace():
-            try:
-                current = self._get_current_workspace()
-                print(f"DEBUG: current={current}, initial={self.initial_workspace}")
-                if current != self.initial_workspace and current != 0:
-                    # User switched workspaces via keyboard, close the disc
-                    print(f"DEBUG: Workspace changed, closing")
-                    self.cleanup_and_close()
-                elif self.isVisible():
-                    # Check again in 100ms if still visible
-                    QTimer.singleShot(100, check_workspace)
-            except Exception as e:
-                print(f"DEBUG: Error {e}")
-
-        # Start checking
-        QTimer.singleShot(100, check_workspace)
-
-    def _get_current_workspace(self):
-        """Get current workspace ID"""
-        try:
-            result = subprocess.run(
-                ["hyprctl", "activeworkspace", "-j"],
-                capture_output=True,
-                text=True,
-                timeout=0.1
-            )
-            if result.returncode == 0:
-                import json
-                data = json.loads(result.stdout)
-                return data.get("id", 0)
-        except:
-            pass
-        return 0
-
     def _setup_animations(self):
-        """Setup open/close animations"""
-        self.open_anim = QPropertyAnimation(self, b"animation_progress")
-        self.open_anim.setDuration(400)  # Slower to see the spread
-        self.open_anim.setStartValue(0.0)
-        self.open_anim.setEndValue(1.0)
-        self.open_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self.open_anim.valueChanged.connect(self.update)
+        """Set up fade-in animation"""
+        self._animation_progress = 0.0
+        self.anim = QPropertyAnimation(self, b"windowOpacity")
+        self.anim.setDuration(150)
+        self.anim.setStartValue(0.0)
+        self.anim.setEndValue(1.0)
+        self.anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        QTimer.singleShot(10, self.anim.start)
 
-    def showEvent(self, event):
-        """Called when window is shown - capture cursor position"""
-        # Get cursor position from Hyprland (more reliable in Wayland)
-        try:
-            result = subprocess.run(
-                ["hyprctl", "cursorpos"],
-                capture_output=True,
-                text=True,
-                timeout=0.1
-            )
-            if result.returncode == 0:
-                # Parse "X, Y" output
-                coords = result.stdout.strip().split(",")
-                x = int(coords[0].strip())
-                y = int(coords[1].strip())
-                self.disc_center = QPoint(x, y)
-            else:
-                self.disc_center = QCursor.pos()
-        except Exception:
-            self.disc_center = QCursor.pos()
+    def _rebuild_menu_stack(self):
+        """Rebuild the menu stack from config"""
+        main_menu = MenuLevel(self.config.items, level=0)
+        self.menu_stack = [main_menu]
 
-        super().showEvent(event)
+    def _on_toggle_changed(self, item_id: str, new_state: bool):
+        """Callback when a toggle item changes state"""
+        # Update the item in the menu structure
+        def update_item(items: List[DiscItem]) -> bool:
+            for item in items:
+                if item.id == item_id:
+                    item.toggle_state = new_state
+                    return True
+                if update_item(item.children):
+                    return True
+            return False
 
-        # Make window visible after it's fully shown (prevents flash)
-        self.setWindowOpacity(1.0)
-
-        # Pin window to all workspaces
-        QTimer.singleShot(100, self._pin_window)
-
-        self.animation_progress = 0.0
-        self.open_anim.start()
-
-    def _pin_window(self):
-        """Pin window to all workspaces using hyprctl"""
-        try:
-            subprocess.run(
-                ["hyprctl", "dispatch", "pin", "class:^(mouse-disc)$"],
-                check=False,
-                timeout=0.5
-            )
-        except:
-            pass
-
-    def set_animation_progress(self, value):
-        self._animation_progress = value
-
-    def get_animation_progress(self):
-        return self._animation_progress
-
-    animation_progress = property(get_animation_progress, set_animation_progress)
+        update_item(self.config.items)
+        self.update()
 
     def paintEvent(self, event):
-        """Draw 6 white dots that spread out from center"""
+        """Draw all menu levels"""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # Center position (cursor)
         cx = self.disc_center.x() - self.screen_rect.x()
         cy = self.disc_center.y() - self.screen_rect.y()
 
-        num_items = len(self.items)
+        # Draw each menu level
+        for menu_level in self.menu_stack:
+            self._draw_menu_level(painter, menu_level, cx, cy)
+
+        # Draw center close button
+        self._draw_center_close(painter, cx, cy)
+
+    def _draw_menu_level(self, painter: QPainter, menu: MenuLevel, cx: float, cy: float):
+        """Draw one level of menu"""
+        style = menu.get_style(self.config)
+        num_items = len(menu.items)
+
         if num_items == 0:
             return
 
-        import math
-
-        # Animation for fade-in
-        progress = self._animation_progress
-        angle_per_dot = 360 / num_items
-
-        # Fixed spread distance (20% closer to center)
-        spread = 112
-
-        # Draw center close button (white circle with X) - no glow
-        center_radius = 18
-
-        # Hover effect for center
-        if self.hovered_index == -2:  # -2 indicates center is hovered
-            center_radius += 4
-            center_color = QColor(255, 255, 255, 255)
+        # Calculate angle step
+        if menu.level == 0:
+            # Main menu: full circle
+            angle_per_item = 360 / num_items
+            start_angle = -90  # Start from top
         else:
-            center_color = QColor(255, 255, 255, 220)
+            # Submenu: fan out around parent angle
+            angle_per_item = 360 / len(self.menu_stack[0].items) * style.sub_spacing_factor
+            total_span = (num_items - 1) * angle_per_item
+            start_angle = menu.parent_angle - total_span / 2
 
-        # Draw single center circle (no glow)
+        for i, item in enumerate(menu.items):
+            angle = start_angle + i * angle_per_item
+            if menu.level == 0:
+                angle = i * angle_per_item - 90
+
+            # Position
+            dot_x = cx + style.spread_radius * math.cos(math.radians(angle))
+            dot_y = cy + style.spread_radius * math.sin(math.radians(angle))
+
+            # Determine color based on state
+            is_hovered = (i == menu.hovered_index)
+            is_toggle_on = item.action_type == "toggle" and item.toggle_state
+
+            if is_toggle_on:
+                if is_hovered:
+                    color = QColor(self.config.colors.get("toggle_on_hover", "#ff6060"))
+                else:
+                    color = QColor(self.config.colors.get("toggle_on", "#ff5050"))
+            else:
+                if is_hovered:
+                    color = QColor(self.config.colors.get("hover", "#ffffff"))
+                else:
+                    color = QColor(item.color)
+
+            # Draw dot
+            radius = style.dot_radius + (style.hover_growth if is_hovered else 0)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            painter.drawEllipse(QPoint(int(dot_x), int(dot_y)), radius, radius)
+
+            # Draw icon
+            icon_color = QColor(self.config.colors.get("icon", "#282828"))
+            draw_icon(painter, dot_x, dot_y, style.dot_radius * 0.5, item.id, icon_color)
+
+    def _draw_center_close(self, painter: QPainter, cx: float, cy: float):
+        """Draw center close button"""
+        center_radius = 20
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(center_color)
-        painter.drawEllipse(QPoint(int(cx), int(cy)), int(center_radius), int(center_radius))
+        painter.setBrush(QColor(self.config.colors.get("center_close", "#ffffff")))
+        painter.drawEllipse(QPoint(int(cx), int(cy)), center_radius, center_radius)
 
         # Draw X
-        painter.setPen(QColor(0, 0, 0, 200))
         painter.setPen(QPen(QColor(0, 0, 0, 200), 2))
         x_size = center_radius * 0.5
         painter.drawLine(int(cx - x_size), int(cy - x_size), int(cx + x_size), int(cy + x_size))
         painter.drawLine(int(cx + x_size), int(cy - x_size), int(cx - x_size), int(cy + x_size))
 
-        # Draw 6 dots in a circle around center
-        for i in range(num_items):
-            angle = i * angle_per_dot - 90  # -90 to start from top
-
-            # Fixed dot position in a circle
-            dot_x = cx + spread * math.cos(math.radians(angle))
-            dot_y = cy + spread * math.sin(math.radians(angle))
-
-            # Always visible dots
-            dot_radius = 35
-
-            # Hover effect
-            if i == self.hovered_index:
-                dot_radius += 5
-                color = QColor(255, 255, 255, 255)
-                glow = QColor(255, 255, 255, 100)
-            else:
-                color = QColor(255, 255, 255, 220)
-                glow = QColor(255, 255, 255, 60)
-
-            item = self.items[i]
-            self._draw_dot(painter, dot_x, dot_y, dot_radius, color, glow,
-                          item_id=item.id)
-
-            # If any menu is expanded, draw sub-items
-            if self.expanded_index >= 0 and i == self.expanded_index:
-                menu_type = self.items[self.expanded_index].id
-                if menu_type in self.sub_items:
-                    self._draw_sub_items(painter, dot_x, dot_y, angle, menu_type)
-
-    def _draw_dot(self, painter, x, y, radius, color, glow_color, label="", item_id=""):
-        """Draw a single dot with custom icon - no glow effect"""
-        # Draw single circle (no glow layers)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(color)
-        painter.drawEllipse(
-            QPoint(int(x), int(y)),
-            int(radius),
-            int(radius)
-        )
-
-        # Draw icon based on item_id
-        icon_color = QColor(40, 40, 40, 220) if color.lightness() > 150 else QColor(255, 255, 255, 220)
-        self._draw_icon(painter, x, y, radius * 0.5, item_id, icon_color)
-
-    def _draw_sub_items(self, painter, parent_x, parent_y, parent_angle, menu_type):
-        """Draw sub-menu items arranged on a larger arc at double the distance"""
-        import math
-
-        items = self.sub_items.get(menu_type, [])
-        num_sub = len(items)
-        sub_radius = 35  # Same size as main tabs
-
-        # Sub-items are on a circle at double the distance from center
-        main_spread = 112  # Main items radius
-        sub_spread = 224   # Double the distance (112 * 2)
-
-        # Use 60% of the angular spacing of main tabs (closer but not overlapping)
-        num_main = len(self.items)
-        main_angle_step = 360 / num_main
-        sub_angle_step = main_angle_step * 0.6  # 60% of main spacing
-
-        # Center the sub-items around the parent angle
-        total_span = (num_sub - 1) * sub_angle_step
-        start_angle = parent_angle - total_span / 2
-
-        for j in range(num_sub):
-            item = items[j]
-            # Calculate angle for this sub-item using reduced step
-            sub_angle = start_angle + j * sub_angle_step
-
-            # Position on the larger circle
-            sub_x = self.disc_center.x() - self.screen_rect.x() + sub_spread * math.cos(math.radians(sub_angle))
-            sub_y = self.disc_center.y() - self.screen_rect.y() + sub_spread * math.sin(math.radians(sub_angle))
-
-            # Check toggle state for color
-            is_toggled = self.toggle_states.get(item.id, False)
-
-            # Hover effect and toggle state
-            if j == self.sub_hovered_index:
-                sub_radius_hover = sub_radius + 5  # Same hover effect as main
-                if is_toggled:
-                    color = QColor(255, 80, 80, 255)  # Red when toggled ON and hovered
-                else:
-                    color = QColor(255, 255, 255, 255)
-            else:
-                sub_radius_hover = sub_radius
-                if is_toggled:
-                    color = QColor(220, 60, 60, 255)  # Red when toggled ON
-                else:
-                    color = QColor(232, 232, 232, 220)
-
-            # Draw sub dot
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(color)
-            painter.drawEllipse(QPoint(int(sub_x), int(sub_y)), int(sub_radius_hover), int(sub_radius_hover))
-
-            # Draw icon
-            icon_color = QColor(40, 40, 40, 220)
-            self._draw_icon(painter, sub_x, sub_y, sub_radius * 0.5, item.id, icon_color)
-
-    def _draw_icon(self, painter, cx, cy, size, item_id, color):
-        """Draw a custom icon based on the item type"""
-        painter.setPen(QPen(color, max(1.5, size * 0.15)))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-
-        if item_id == "browser":
-            # Globe icon
-            painter.drawEllipse(QPoint(int(cx), int(cy)), int(size * 0.7), int(size * 0.7))
-            painter.drawLine(int(cx - size * 0.7), int(cy), int(cx + size * 0.7), int(cy))
-            painter.drawLine(int(cx), int(cy - size * 0.7), int(cx), int(cy + size * 0.7))
-            # Curved lines
-            for offset in [-0.4, 0.4]:
-                painter.drawArc(
-                    int(cx - size * 0.7), int(cy + offset * size),
-                    int(size * 1.4), int(size * 0.8),
-                    0, 180 * 16
-                )
-
-        elif item_id == "terminal":
-            # Terminal window with >_
-            rect_size = size * 1.2
-            painter.drawRoundedRect(
-                int(cx - rect_size/2), int(cy - rect_size/2 * 0.7),
-                int(rect_size), int(rect_size * 0.8), 3, 3
-            )
-            # Prompt symbol
-            painter.drawLine(int(cx - size * 0.3), int(cy - size * 0.1), int(cx - size * 0.1), int(cy + size * 0.1))
-            painter.drawLine(int(cx - size * 0.1), int(cy + size * 0.1), int(cx + size * 0.2), int(cy - size * 0.2))
-            painter.drawLine(int(cx - size * 0.1), int(cy + size * 0.2), int(cx + size * 0.3), int(cy + size * 0.2))
-
-        elif item_id == "files":
-            # Folder icon
-            folder_w = size * 1.4
-            folder_h = size * 1.0
-            painter.drawRoundedRect(int(cx - folder_w/2), int(cy - folder_h/2 + size * 0.2), int(folder_w), int(folder_h * 0.7), 2, 2)
-            # Folder tab
-            painter.drawLine(int(cx - folder_w/2), int(cy - folder_h/2 + size * 0.2),
-                           int(cx - folder_w/2 + size * 0.4), int(cy - folder_h/2 + size * 0.2))
-            painter.drawLine(int(cx - folder_w/2 + size * 0.4), int(cy - folder_h/2 + size * 0.2),
-                           int(cx - folder_w/2 + size * 0.5), int(cy - folder_h/2))
-            painter.drawLine(int(cx - folder_w/2 + size * 0.5), int(cy - folder_h/2),
-                           int(cx + folder_w/2), int(cy - folder_h/2))
-
-        elif item_id == "editor":
-            # Code brackets < />
-            painter.drawLine(int(cx - size * 0.4), int(cy - size * 0.3), int(cx - size * 0.6), int(cy))
-            painter.drawLine(int(cx - size * 0.6), int(cy), int(cx - size * 0.4), int(cy + size * 0.3))
-            painter.drawLine(int(cx + size * 0.4), int(cy - size * 0.3), int(cx + size * 0.6), int(cy))
-            painter.drawLine(int(cx + size * 0.6), int(cy), int(cx + size * 0.4), int(cy + size * 0.3))
-            painter.drawLine(int(cx - size * 0.1), int(cy - size * 0.4), int(cx + size * 0.1), int(cy + size * 0.4))
-
-        elif item_id == "screenshot":
-            # Camera/frame icon
-            frame_size = size * 1.2
-            painter.drawRect(int(cx - frame_size/2), int(cy - frame_size/2), int(frame_size), int(frame_size))
-            # Corner brackets
-            corner = size * 0.3
-            for dx, dy in [(-1, -1), (1, -1), (-1, 1), (1, 1)]:
-                px = cx + dx * frame_size/2
-                py = cy + dy * frame_size/2
-                painter.drawLine(int(px), int(py - dy * corner), int(px), int(py))
-                painter.drawLine(int(px - dx * corner), int(py), int(px), int(py))
-            # Center dot
-            painter.setBrush(color)
-            painter.drawEllipse(QPoint(int(cx), int(cy)), int(size * 0.2), int(size * 0.2))
-
-        elif item_id == "close_win":
-            # X icon
-            painter.drawLine(int(cx - size * 0.5), int(cy - size * 0.5), int(cx + size * 0.5), int(cy + size * 0.5))
-            painter.drawLine(int(cx + size * 0.5), int(cy - size * 0.5), int(cx - size * 0.5), int(cy + size * 0.5))
-
-        elif item_id == "music":
-            # Music note icon
-            # Note head (circle)
-            painter.setBrush(color)
-            painter.drawEllipse(QPoint(int(cx - size * 0.2), int(cy + size * 0.3)), int(size * 0.25), int(size * 0.2))
-            # Stem
-            painter.drawLine(int(cx + size * 0.05), int(cy + size * 0.3), int(cx + size * 0.05), int(cy - size * 0.4))
-            # Flag
-            painter.drawLine(int(cx + size * 0.05), int(cy - size * 0.4), int(cx + size * 0.4), int(cy - size * 0.1))
-            painter.drawLine(int(cx + size * 0.4), int(cy - size * 0.1), int(cx + size * 0.05), int(cy + size * 0.1))
-
-        elif item_id == "lock":
-            # Lock icon
-            lock_w = size * 0.8
-            lock_h = size * 0.6
-            # Lock body
-            painter.drawRoundedRect(int(cx - lock_w/2), int(cy - lock_h/2 + size * 0.2), int(lock_w), int(lock_h), 3, 3)
-            # Shackle (arc)
-            painter.drawArc(int(cx - lock_w/2), int(cy - size * 0.6), int(lock_w), int(size * 0.8), 0, 180 * 16)
-            # Keyhole
-            painter.setBrush(color)
-            painter.drawEllipse(QPoint(int(cx), int(cy + size * 0.1)), int(size * 0.1), int(size * 0.1))
-            painter.drawLine(int(cx), int(cy + size * 0.1), int(cx), int(cy + size * 0.3))
-
-        elif item_id == "apps":
-            # Grid of 4 squares (app launcher icon)
-            sq = size * 0.35
-            gap = size * 0.1
-            for dx in [-1, 1]:
-                for dy in [-1, 1]:
-                    sx = cx + dx * (sq/2 + gap/2)
-                    sy = cy + dy * (sq/2 + gap/2)
-                    painter.drawRect(int(sx - sq/2), int(sy - sq/2), int(sq), int(sq))
-
-        elif item_id == "controls":
-            # Sliders/controls icon
-            # Two vertical sliders
-            for sx in [cx - size * 0.25, cx + size * 0.25]:
-                # Slider track
-                painter.drawLine(int(sx), int(cy - size * 0.4), int(sx), int(cy + size * 0.4))
-                # Slider knob
-                knob_y = cy + (0.2 if sx < cx else -0.2) * size
-                painter.drawRect(int(sx - size * 0.1), int(knob_y - size * 0.08), int(size * 0.2), int(size * 0.16))
-
-        elif item_id == "wifi":
-            # WiFi signal icon
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            # Arcs for signal strength
-            for i, r in enumerate([0.2, 0.4, 0.6]):
-                painter.drawArc(int(cx - size * r), int(cy - size * r), int(size * r * 2), int(size * r * 2), 45 * 16, 90 * 16)
-            # Dot at bottom
-            painter.setBrush(color)
-            painter.drawEllipse(QPoint(int(cx), int(cy + size * 0.65)), int(size * 0.12), int(size * 0.12))
-
-        elif item_id == "bluetooth":
-            # Bluetooth rune symbol
-            painter.drawLine(int(cx), int(cy - size * 0.5), int(cx), int(cy + size * 0.5))
-            painter.drawLine(int(cx - size * 0.3), int(cy - size * 0.25), int(cx), int(cy))
-            painter.drawLine(int(cx - size * 0.3), int(cy + size * 0.25), int(cx), int(cy))
-            painter.drawLine(int(cx), int(cy), int(cx + size * 0.3), int(cy - size * 0.25))
-            painter.drawLine(int(cx), int(cy), int(cx + size * 0.3), int(cy + size * 0.25))
-
-        elif item_id == "obsidian":
-            # Crystal/gem shape
-            painter.drawPolygon([
-                QPoint(int(cx), int(cy - size * 0.6)),
-                QPoint(int(cx + size * 0.5), int(cy - size * 0.2)),
-                QPoint(int(cx + size * 0.3), int(cy + size * 0.5)),
-                QPoint(int(cx - size * 0.3), int(cy + size * 0.5)),
-                QPoint(int(cx - size * 0.5), int(cy - size * 0.2)),
-            ])
-
-        elif item_id == "antigravity":
-            # Up arrow (anti-gravity)
-            painter.drawLine(int(cx), int(cy + size * 0.4), int(cx), int(cy - size * 0.4))
-            painter.drawLine(int(cx - size * 0.4), int(cy), int(cx), int(cy - size * 0.4))
-            painter.drawLine(int(cx + size * 0.4), int(cy), int(cx), int(cy - size * 0.4))
-
-        elif item_id == "zen":
-            # Z letter
-            painter.drawLine(int(cx - size * 0.4), int(cy - size * 0.4), int(cx + size * 0.4), int(cy - size * 0.4))
-            painter.drawLine(int(cx + size * 0.4), int(cy - size * 0.4), int(cx - size * 0.4), int(cy + size * 0.4))
-            painter.drawLine(int(cx - size * 0.4), int(cy + size * 0.4), int(cx + size * 0.4), int(cy + size * 0.4))
-
-        elif item_id == "zapzap":
-            # Lightning bolt
-            painter.drawPolygon([
-                QPoint(int(cx + size * 0.3), int(cy - size * 0.5)),
-                QPoint(int(cx - size * 0.1), int(cy)),
-                QPoint(int(cx + size * 0.2), int(cy)),
-                QPoint(int(cx - size * 0.2), int(cy + size * 0.5)),
-                QPoint(int(cx + size * 0.1), int(cy)),
-                QPoint(int(cx - size * 0.3), int(cy)),
-            ])
-
-    def _create_segment_path(self, cx, cy, inner_r, outer_r, start_angle, end_angle):
-        """Create a pie segment path"""
-        from PyQt6.QtGui import QPainterPath
-
-        path = QPainterPath()
-
-        # Start from inner arc
-        start_rad = start_angle * 3.14159 / 180
-        path.moveTo(cx + inner_r * cos_deg(start_angle), cy - inner_r * sin_deg(start_angle))
-
-        # Outer arc
-        path.arcTo(cx - outer_r, cy - outer_r, outer_r * 2, outer_r * 2,
-                   start_angle, end_angle - start_angle)
-
-        # Line to inner arc end
-        path.lineTo(cx + inner_r * cos_deg(end_angle), cy - inner_r * sin_deg(end_angle))
-
-        # Inner arc (clockwise to close)
-        path.arcTo(cx - inner_r, cy - inner_r, inner_r * 2, inner_r * 2,
-                   end_angle, start_angle - end_angle)
-
-        path.closeSubpath()
-        return path
-
     def mouseMoveEvent(self, event):
-        """Handle mouse movement for hover effects on dots and center"""
+        """Handle mouse movement for hover detection"""
         import math
         pos = event.pos()
-
-        # Center position
         cx = self.disc_center.x() - self.screen_rect.x()
         cy = self.disc_center.y() - self.screen_rect.y()
 
-        # Check if hovering over center close button
+        # Check center close button
         dx = pos.x() - cx
         dy = pos.y() - cy
-        dist_to_center = (dx ** 2 + dy ** 2) ** 0.5
-
-        if dist_to_center < 25:
-            self.hovered_index = -2  # Special value for center
-            self.expanded_index = -1  # Collapse any expanded menu
-            self.sub_hovered_index = -1
+        if (dx ** 2 + dy ** 2) ** 0.5 < self.config.settings.get("close_hit_radius", 25):
+            self._collapse_all_submenus()
             self.update()
             return
 
-        # Check distance to each dot
-        num_items = len(self.items)
-        angle_per_dot = 360 / num_items
-        spread = 112
+        # Process each menu level from deepest to shallowest
+        handled = False
+        for menu_idx in range(len(self.menu_stack) - 1, -1, -1):
+            menu = self.menu_stack[menu_idx]
+            style = menu.get_style(self.config)
 
-        self.hovered_index = -1
-        self.sub_hovered_index = -1
+            num_items = len(menu.items)
+            if num_items == 0:
+                continue
 
-        # Find which main item is hovered
-        hovered_main_index = -1
-        for i in range(num_items):
-            angle = i * angle_per_dot - 90
-            dot_x = cx + spread * math.cos(math.radians(angle))
-            dot_y = cy + spread * math.sin(math.radians(angle))
+            # Calculate positions
+            if menu.level == 0:
+                angle_per_item = 360 / num_items
+                start_angle = -90
+            else:
+                main_items = len(self.menu_stack[0].items)
+                angle_per_item = 360 / main_items * style.sub_spacing_factor
+                total_span = (num_items - 1) * angle_per_item
+                start_angle = menu.parent_angle - total_span / 2
 
-            dx = pos.x() - dot_x
-            dy = pos.y() - dot_y
-            distance = (dx ** 2 + dy ** 2) ** 0.5
+            for i, item in enumerate(menu.items):
+                angle = start_angle + i * angle_per_item
+                if menu.level == 0:
+                    angle = i * angle_per_item - 90
 
-            if distance < 50:
-                hovered_main_index = i
+                dot_x = cx + style.spread_radius * math.cos(math.radians(angle))
+                dot_y = cy + style.spread_radius * math.sin(math.radians(angle))
+
+                dx = pos.x() - dot_x
+                dy = pos.y() - dot_y
+                dist = (dx ** 2 + dy ** 2) ** 0.5
+
+                if dist < style.hit_radius:
+                    # Hovering over this item
+                    menu.hovered_index = i
+
+                    # If this item has children, expand it
+                    if item.children:
+                        self._expand_submenu(menu_idx, i, angle, item)
+                    else:
+                        # Collapse any deeper submenus
+                        self._collapse_submenus_below(menu_idx)
+
+                    handled = True
+                    break
+            else:
+                # Not hovering over any item in this menu
+                menu.hovered_index = -1
+
+            if handled:
                 break
 
-        self.hovered_index = hovered_main_index
+        if not handled:
+            # Check if we're in corridor between menu levels
+            # If not, collapse submenus
+            pass  # Keep submenus open for now (corridor logic can be added)
 
-        # Handle expanded menu hover zone
-        if self.expanded_index >= 0:
-            menu_type = self.items[self.expanded_index].id
-            current_sub_items = self.sub_items.get(menu_type, [])
-            num_sub = len(current_sub_items)
-            sub_spread = 224  # Double the main spread
-
-            # Get the parent angle and position
-            expanded_angle = self.expanded_index * angle_per_dot - 90
-            parent_x = cx + spread * math.cos(math.radians(expanded_angle))
-            parent_y = cy + spread * math.sin(math.radians(expanded_angle))
-
-            # Calculate sub-item positions
-            num_main = len(self.items)
-            main_angle_step = 360 / num_main
-            sub_angle_step = main_angle_step * 0.6
-            total_span = (num_sub - 1) * sub_angle_step if num_sub > 0 else 0
-            start_angle = expanded_angle - total_span / 2
-
-            sub_positions = []
-            for j in range(num_sub):
-                sub_angle = start_angle + j * sub_angle_step
-                sub_x = cx + sub_spread * math.cos(math.radians(sub_angle))
-                sub_y = cy + sub_spread * math.sin(math.radians(sub_angle))
-                sub_positions.append((sub_x, sub_y))
-
-            # Build a connected zone: parent + sub-circles + corridor between them
-            # Check if mouse is near parent
-            dx_parent = pos.x() - parent_x
-            dy_parent = pos.y() - parent_y
-            dist_parent = (dx_parent ** 2 + dy_parent ** 2) ** 0.5
-            near_parent = dist_parent < 60
-
-            # Check if mouse is near any sub-item
-            near_sub = False
-            nearest_sub_idx = -1
-            for j, (sub_x, sub_y) in enumerate(sub_positions):
-                dx_sub = pos.x() - sub_x
-                dy_sub = pos.y() - sub_y
-                dist_sub = (dx_sub ** 2 + dy_sub ** 2) ** 0.5
-                if dist_sub < 60:
-                    near_sub = True
-                    nearest_sub_idx = j
-                    break
-
-            # Check if mouse is in the corridor (between parent and sub-items)
-            in_corridor = False
-            if sub_positions:
-                # Check distance to line segments connecting parent to each sub-item
-                for sub_x, sub_y in sub_positions:
-                    # Distance from point to line segment
-                    line_dx = sub_x - parent_x
-                    line_dy = sub_y - parent_y
-                    line_len_sq = line_dx ** 2 + line_dy ** 2
-                    if line_len_sq > 0:
-                        # Project point onto line
-                        t = max(0, min(1, ((pos.x() - parent_x) * line_dx + (pos.y() - parent_y) * line_dy) / line_len_sq))
-                        proj_x = parent_x + t * line_dx
-                        proj_y = parent_y + t * line_dy
-                        dist_to_line = ((pos.x() - proj_x) ** 2 + (pos.y() - proj_y) ** 2) ** 0.5
-                        if dist_to_line < 80:  # Wide corridor
-                            in_corridor = True
-                            break
-
-                # Also check between adjacent sub-items
-                for i in range(len(sub_positions) - 1):
-                    x1, y1 = sub_positions[i]
-                    x2, y2 = sub_positions[i + 1]
-                    line_dx = x2 - x1
-                    line_dy = y2 - y1
-                    line_len_sq = line_dx ** 2 + line_dy ** 2
-                    if line_len_sq > 0:
-                        t = max(0, min(1, ((pos.x() - x1) * line_dx + (pos.y() - y1) * line_dy) / line_len_sq))
-                        proj_x = x1 + t * line_dx
-                        proj_y = y1 + t * line_dy
-                        dist_to_line = ((pos.x() - proj_x) ** 2 + (pos.y() - proj_y) ** 2) ** 0.5
-                        if dist_to_line < 70:
-                            in_corridor = True
-                            break
-
-            # Determine if we're in the expanded zone
-            in_expanded_zone = near_parent or near_sub or in_corridor
-
-            if in_expanded_zone:
-                # If hovering over a specific sub-item, set it
-                if near_sub:
-                    self.sub_hovered_index = nearest_sub_idx
-                else:
-                    self.sub_hovered_index = -1
-            else:
-                # Not in zone, collapse
-                self.expanded_index = -1
-                self.sub_hovered_index = -1
-
-        # If apps or controls is hovered, expand it
-        if hovered_main_index >= 0:
-            item_id = self.items[hovered_main_index].id
-            if item_id in self.sub_items:
-                self.expanded_index = hovered_main_index
-
-        # Debug: print state when apps is hovered or expanded
         self.update()
 
-    def mousePressEvent(self, event):
-        """Handle click to select item or close"""
-        # Mouse back button (button 4) - previous workspace then reopen
-        if event.button() == Qt.MouseButton.XButton1:
-            subprocess.run(["hyprctl", "dispatch", "workspace", "-1"])
-            self.cleanup_and_close()
-            # Reopen after workspace switch
-            subprocess.Popen(
-                ["bash", "-c", "sleep 0.15 && python3 ~/Projects/mouse-disc/mouse_disc.py --show"]
-            )
-            return
+    def _expand_submenu(self, parent_menu_idx: int, child_idx: int, angle: float, item: DiscItem):
+        """Expand a submenu"""
+        # Remove any submenus below this level
+        while len(self.menu_stack) > parent_menu_idx + 1:
+            self.menu_stack.pop()
 
-        # Mouse forward button (button 5) - next workspace then reopen
-        if event.button() == Qt.MouseButton.XButton2:
-            subprocess.run(["hyprctl", "dispatch", "workspace", "+1"])
-            self.cleanup_and_close()
-            # Reopen after workspace switch
-            subprocess.Popen(
-                ["bash", "-c", "sleep 0.15 && python3 ~/Projects/mouse-disc/mouse_disc.py --show"]
-            )
-            return
+        # Mark parent as having expanded child
+        self.menu_stack[parent_menu_idx].expanded_child = child_idx
 
-        # Clicking center (-2) closes without action
-        if self.hovered_index == -2:
-            self.cleanup_and_close()
-            return
+        # Add new submenu level
+        submenu = MenuLevel(
+            items=item.children,
+            parent_angle=angle,
+            level=parent_menu_idx + 1,
+            parent_item=item
+        )
+        self.menu_stack.append(submenu)
 
-        # Check if clicking on a sub-item first
-        if self.sub_hovered_index >= 0 and self.expanded_index >= 0:
-            menu_type = self.items[self.expanded_index].id
-            sub_item = self.sub_items[menu_type][self.sub_hovered_index]
-            if sub_item.action_type == "toggle":
-                # Toggle the state and don't close
-                self.toggle_states[sub_item.id] = not self.toggle_states.get(sub_item.id, False)
-                # Execute the toggle action
-                self.execute_action(sub_item)
-                self.update()
-                return
-            else:
-                self.execute_action(sub_item)
-                self.cleanup_and_close()
-                return
+    def _collapse_submenus_below(self, level: int):
+        """Collapse all submenus below the given level"""
+        while len(self.menu_stack) > level + 1:
+            menu = self.menu_stack.pop()
+            # Clear expanded_child on parent
+            if self.menu_stack:
+                self.menu_stack[-1].expanded_child = None
 
-        # Clicking outside all items closes it
-        if self.hovered_index < 0:
-            self.cleanup_and_close()
-            return
-
-        # Check if clicking on a menu item (which shouldn't execute, just expand)
-        item_id = self.items[self.hovered_index].id
-        if item_id in self.sub_items:
-            # Just expand it, don't close
-            self.expanded_index = self.hovered_index
-            self.update()
-            return
-
-        self.selected_index = self.hovered_index
-        self.execute_action(self.items[self.hovered_index])
-        self.cleanup_and_close()
-
-    def cleanup_and_close(self):
-        """Clean up lock file and close window"""
-        lock_file = Path("/tmp/mouse-disc.lock")
-        if lock_file.exists():
-            try:
-                lock_file.unlink()
-            except:
-                pass
-        self.close()
+    def _collapse_all_submenus(self):
+        """Collapse all submenus, keeping only main menu"""
+        self._collapse_submenus_below(0)
 
     def keyPressEvent(self, event):
         """Handle keyboard shortcuts"""
         if event.key() == Qt.Key.Key_Escape:
             self.close()
 
-    def execute_action(self, item: DiscItem):
-        """Execute the action for an item"""
-        try:
-            if item.action_type == "command":
-                subprocess.Popen(item.action, shell=True)
-            elif item.action_type == "app":
-                subprocess.Popen([item.action])
-            elif item.action_type == "hyprland":
-                subprocess.run(["hyprctl", item.action])
-            elif item.action_type == "media":
-                if item.action == "play-pause":
-                    subprocess.run(["playerctl", "play-pause"])
-                elif item.action == "next":
-                    subprocess.run(["playerctl", "next"])
-                elif item.action == "previous":
-                    subprocess.run(["playerctl", "previous"])
-                elif item.action.startswith("volume"):
-                    change = item.action.split()[1] if " " in item.action else "5%"
-                    subprocess.run(["pactl", "set-sink-volume", "@DEFAULT_SINK@", change])
-            elif item.action_type == "toggle":
-                # Handle toggle actions
-                is_enabled = self.toggle_states.get(item.id, False)
-                if item.id == "wifi":
-                    if is_enabled:
-                        subprocess.run(["nmcli", "radio", "wifi", "on"])
+    def closeEvent(self, event):
+        """Release lock when closing"""
+        if hasattr(self, 'lock') and self.lock:
+            self.lock.release()
+        super().closeEvent(event)
+
+    def mousePressEvent(self, event):
+        """Handle mouse clicks including back/forward buttons"""
+        # Mouse back button (button 4) - previous workspace
+        if event.button() == Qt.MouseButton.XButton1:
+            subprocess.run(["hyprctl", "dispatch", "workspace", "-1"])
+            self.close()
+            # Reopen after workspace switch
+            QTimer.singleShot(150, lambda: subprocess.Popen(
+                ["python3", str(Path(__file__).resolve()), "--show"]
+            ))
+            return
+
+        # Mouse forward button (button 5) - next workspace
+        if event.button() == Qt.MouseButton.XButton2:
+            subprocess.run(["hyprctl", "dispatch", "workspace", "+1"])
+            self.close()
+            # Reopen after workspace switch
+            QTimer.singleShot(150, lambda: subprocess.Popen(
+                ["python3", str(Path(__file__).resolve()), "--show"]
+            ))
+            return
+
+        # Handle normal clicks
+        cx = self.disc_center.x() - self.screen_rect.x()
+        cy = self.disc_center.y() - self.screen_rect.y()
+        pos = event.pos()
+
+        # Check center close
+        dx = pos.x() - cx
+        dy = pos.y() - cy
+        if (dx ** 2 + dy ** 2) ** 0.5 < self.config.settings.get("close_hit_radius", 25):
+            self.close()
+            return
+
+        # Check from deepest menu to shallowest
+        for menu_idx in range(len(self.menu_stack) - 1, -1, -1):
+            menu = self.menu_stack[menu_idx]
+
+            if menu.hovered_index >= 0:
+                item = menu.items[menu.hovered_index]
+
+                if item.children:
+                    # Menu item - just expand, don't close
+                    return
+                else:
+                    # Action item - execute
+                    should_close = self.executor.execute(item)
+                    if should_close:
+                        self.close()
                     else:
-                        subprocess.run(["nmcli", "radio", "wifi", "off"])
-                elif item.id == "bluetooth":
-                    if is_enabled:
-                        subprocess.run(["bluetoothctl", "power", "on"])
-                    else:
-                        subprocess.run(["bluetoothctl", "power", "off"])
-        except Exception as e:
-            print(f"Error executing action: {e}")
+                        self.update()
+                    return
 
-
-def cos_deg(angle):
-    import math
-    return math.cos(math.radians(angle))
-
-
-def sin_deg(angle):
-    import math
-    return math.sin(math.radians(angle))
+        # Clicked outside - close
+        self.close()
 
 
 class MouseDiscApp:
@@ -887,20 +405,16 @@ class MouseDiscApp:
         self.app.setApplicationName("mouse-disc")
         self.app.setQuitOnLastWindowClosed(False)
 
-        # Create tray icon
-        self._create_tray()
+        self.config_manager = ConfigManager()
+        self.window: Optional[MouseDiscWindow] = None
 
-        # Global hotkey for middle click simulation (optional)
-        self.menu = None
+        self._create_tray()
 
     def _create_tray(self):
         """Create system tray icon"""
-        from PyQt6.QtWidgets import QSystemTrayIcon, QMenu
-
         self.tray = QSystemTrayIcon(self.app)
         self.tray.setToolTip("Mouse Disc - Middle click to open")
 
-        # Create tray menu
         tray_menu = QMenu()
         show_action = QAction("Show", self.app)
         show_action.triggered.connect(self.show_menu)
@@ -917,68 +431,93 @@ class MouseDiscApp:
         tray_menu.addAction(quit_action)
 
         self.tray.setContextMenu(tray_menu)
+        self.tray.activated.connect(self._on_tray_activated)
         self.tray.show()
 
-    def _open_config(self):
-        """Open config file in editor"""
-        config_path = Path.home() / ".config" / "mouse-disc" / "config.json"
-        subprocess.Popen(["xdg-open", str(config_path)])
+    def _on_tray_activated(self, reason):
+        """Handle tray icon activation"""
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            self.show_menu()
 
     def show_menu(self):
         """Show the radial menu"""
-        if self.menu is not None:
-            self.menu.close()
-            self.menu.deleteLater()
+        # Check lock first
+        lock = SingleInstanceLock()
+        if not lock.acquire():
+            # Another instance is running, close it first
+            return
 
-        self.menu = RadialMenu()
-        self.menu.show()
-        self.menu.activateWindow()
-        self.menu.raise_()
+        if self.window is not None:
+            self.window.close()
+            self.window = None
+
+        # Get cursor position from hyprland
+        cursor_x, cursor_y = get_cursor_pos_from_hyprland()
+
+        # Reload config
+        self.config_manager.config = self.config_manager.load()
+
+        self.window = MouseDiscWindow(self.config_manager, lock, cursor_x, cursor_y)
+        self.window.show()
+        self.window.raise_()
+        self.window.activateWindow()
+
+    def _open_config(self):
+        """Open config file in editor"""
+        subprocess.Popen(["xdg-open", str(self.config_manager.config_path)])
 
     def run(self):
-        """Start the application"""
-        print("Mouse Disc started. Middle-click to open the menu.")
-        print("Running in system tray.")
-        return self.app.exec()
+        """Run the application"""
+        sys.exit(self.app.exec())
+
+
+def get_cursor_pos_from_hyprland() -> Tuple[int, int]:
+    """Get cursor position from hyprland before QApplication starts"""
+    try:
+        result = subprocess.run(
+            ["hyprctl", "cursorpos"],
+            capture_output=True,
+            text=True,
+            timeout=0.5
+        )
+        if result.returncode == 0:
+            # Parse output like "1234, 567"
+            parts = result.stdout.strip().split(",")
+            if len(parts) == 2:
+                return int(parts[0].strip()), int(parts[1].strip())
+    except Exception:
+        pass
+    return 0, 0
 
 
 def main():
-    # Handle CLI args for Hyprland integration
+    """Entry point"""
     if len(sys.argv) > 1 and sys.argv[1] == "--show":
-        # Check if already running - if so, kill it (toggle behavior)
-        lock_file = Path("/tmp/mouse-disc.lock")
-        if lock_file.exists():
-            try:
-                pid = int(lock_file.read_text().strip())
-                # Kill the existing instance
-                subprocess.run(["kill", "-TERM", str(pid)], check=False)
-                lock_file.unlink()
-                return 0  # Exit without opening new one
-            except:
-                pass
+        # Direct show mode (called from hyprland binding)
+        # Get cursor position BEFORE creating QApplication (which resets it to 0,0)
+        cursor_x, cursor_y = get_cursor_pos_from_hyprland()
 
-        # Show menu and exit (for hotkey binding)
+        # Check single instance lock
+        lock = SingleInstanceLock()
+        if not lock.acquire():
+            # Another instance is running - kill it and open new one
+            subprocess.run(["pkill", "-f", "mouse_disc.py --show"])
+            import time
+            time.sleep(0.1)
+            if not lock.acquire():
+                print("Could not acquire lock")
+                sys.exit(1)
+
         app = QApplication(sys.argv)
-
-        # Write our PID to lock file
-        lock_file.write_text(str(os.getpid()))
-
-        menu = RadialMenu()
-        menu.show()
-
-        # Clean up lock file on close
-        def on_close():
-            if lock_file.exists():
-                lock_file.unlink()
-
-        menu.destroyed.connect(on_close)
-        app.aboutToQuit.connect(on_close)
-
-        return app.exec()
-
-    app = MouseDiscApp()
-    return app.run()
+        config_manager = ConfigManager()
+        window = MouseDiscWindow(config_manager, lock, cursor_x, cursor_y)
+        window.show()
+        sys.exit(app.exec())
+    else:
+        # Tray mode
+        app = MouseDiscApp()
+        app.run()
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
