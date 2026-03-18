@@ -349,32 +349,36 @@ class RadialMenu(QWidget):
         self._draw_icon(painter, x, y, radius * 0.5, item_id, icon_color)
 
     def _draw_sub_items(self, painter, parent_x, parent_y, parent_angle):
-        """Draw sub-menu items that extend perpendicular to the radial direction (sideways)"""
+        """Draw sub-menu items arranged on a larger arc at double the distance"""
         import math
 
         num_sub = len(self.sub_items)
-        sub_spacing = 65  # Distance between sub-items
-        sub_radius = 26
+        sub_radius = 35  # Same size as main tabs
 
-        # Extend perpendicular to the radial direction (sideways/tangent to the circle)
-        # Perpendicular angle = parent_angle + 90 degrees (for clockwise arrangement)
-        perp_angle = parent_angle + 90
-        direction_x = math.cos(math.radians(perp_angle))
-        direction_y = math.sin(math.radians(perp_angle))
+        # Sub-items are on a circle at double the distance from center
+        main_spread = 112  # Main items radius
+        sub_spread = 224   # Double the distance (112 * 2)
 
-        # Center the sub-items around the parent
-        total_width = (num_sub - 1) * sub_spacing
-        start_offset = -total_width / 2
+        # Use 60% of the angular spacing of main tabs (closer but not overlapping)
+        num_main = len(self.items)
+        main_angle_step = 360 / num_main
+        sub_angle_step = main_angle_step * 0.6  # 60% of main spacing
+
+        # Center the sub-items around the parent angle
+        total_span = (num_sub - 1) * sub_angle_step
+        start_angle = parent_angle - total_span / 2
 
         for j in range(num_sub):
-            # Position each sub-item along the perpendicular direction
-            offset = start_offset + j * sub_spacing
-            sub_x = parent_x + offset * direction_x
-            sub_y = parent_y + offset * direction_y
+            # Calculate angle for this sub-item using reduced step
+            sub_angle = start_angle + j * sub_angle_step
+
+            # Position on the larger circle
+            sub_x = self.disc_center.x() - self.screen_rect.x() + sub_spread * math.cos(math.radians(sub_angle))
+            sub_y = self.disc_center.y() - self.screen_rect.y() + sub_spread * math.sin(math.radians(sub_angle))
 
             # Hover effect
             if j == self.sub_hovered_index:
-                sub_radius_hover = sub_radius + 4
+                sub_radius_hover = sub_radius + 5  # Same hover effect as main
                 color = QColor(255, 255, 255, 255)
             else:
                 sub_radius_hover = sub_radius
@@ -604,37 +608,35 @@ class RadialMenu(QWidget):
         # Third: check if hovering over sub-items of expanded menu
         if self.expanded_index >= 0:
             num_sub = len(self.sub_items)
-            sub_spacing = 65
+            sub_spread = 224  # Double the main spread (same as in _draw_sub_items)
 
-            # Get the parent position of the expanded apps item
+            # Get the parent angle
             expanded_angle = self.expanded_index * angle_per_dot - 90
-            parent_x = cx + spread * math.cos(math.radians(expanded_angle))
-            parent_y = cy + spread * math.sin(math.radians(expanded_angle))
 
-            # Perpendicular direction (sideways from the radial direction)
-            perp_angle = expanded_angle + 90
-            direction_x = math.cos(math.radians(perp_angle))
-            direction_y = math.sin(math.radians(perp_angle))
-
-            # Center the sub-items around the parent
-            total_width = (num_sub - 1) * sub_spacing
-            start_offset = -total_width / 2
+            # Calculate the arc angles (same as drawing)
+            num_main = len(self.items)
+            main_angle_step = 360 / num_main
+            sub_angle_step = main_angle_step * 0.6  # 60% of main spacing
+            total_span = (num_sub - 1) * sub_angle_step
+            start_angle = expanded_angle - total_span / 2
 
             for j in range(num_sub):
-                offset = start_offset + j * sub_spacing
-                sub_x = parent_x + offset * direction_x
-                sub_y = parent_y + offset * direction_y
+                sub_angle = start_angle + j * sub_angle_step
+                sub_x = cx + sub_spread * math.cos(math.radians(sub_angle))
+                sub_y = cy + sub_spread * math.sin(math.radians(sub_angle))
 
                 dx_sub = pos.x() - sub_x
                 dy_sub = pos.y() - sub_y
                 dist_sub = (dx_sub ** 2 + dy_sub ** 2) ** 0.5
 
-                if dist_sub < 35:  # Hit area for sub-items
+                if dist_sub < 50:  # Same hit area as main items
                     self.sub_hovered_index = j
                     break
 
             # If not hovering over sub-items AND not hovering over the parent, collapse
             if self.sub_hovered_index < 0 and hovered_main_index != self.expanded_index:
+                parent_x = cx + spread * math.cos(math.radians(expanded_angle))
+                parent_y = cy + spread * math.sin(math.radians(expanded_angle))
                 dx_parent = pos.x() - parent_x
                 dy_parent = pos.y() - parent_y
                 dist_parent = (dx_parent ** 2 + dy_parent ** 2) ** 0.5
