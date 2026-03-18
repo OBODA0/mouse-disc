@@ -41,7 +41,9 @@ class Tab:
     def execute(self) -> bool:
         """Execute the tab action. Returns True if menu should close."""
         if self.action_handler:
-            return self.action_handler()
+            result = self.action_handler()
+            # If handler returns explicit bool, use it; otherwise default to True (close menu)
+            return result if isinstance(result, bool) else True
         return True  # Default: close menu
 
     def sync_toggle_state(self) -> bool:

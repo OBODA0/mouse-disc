@@ -37,6 +37,11 @@ class MouseDiscWindow(QWidget):
         # Brightness level (0.0 to 1.0) for the controls bar
         self.brightness_level = 1.0
 
+        # Track current workspace to detect switches
+        self.current_workspace = self._get_current_workspace()
+        self.workspace_check_timer = QTimer(self)
+        self.workspace_check_timer.timeout.connect(self._check_workspace_switch)
+
         # Use provided cursor position (from hyprland) or try to get from Qt
         if cursor_x != 0 or cursor_y != 0:
             self.disc_center = QPoint(cursor_x, cursor_y)
@@ -51,6 +56,9 @@ class MouseDiscWindow(QWidget):
 
         # Build initial main menu
         self._rebuild_menu_stack()
+
+        # Start workspace monitoring
+        self.workspace_check_timer.start(100)  # Check every 100ms
 
     def _setup_window(self):
         """Configure full-screen overlay window"""
@@ -115,6 +123,32 @@ class MouseDiscWindow(QWidget):
             self.brightness_level = get_brightness_state()
         except Exception:
             pass
+
+    def _get_current_workspace(self) -> int:
+        """Get current workspace ID from Hyprland"""
+        try:
+            result = subprocess.run(
+                ["hyprctl", "activeworkspace"],
+                capture_output=True, text=True, timeout=0.5
+            )
+            if result.returncode == 0:
+                # Parse "workspace ID ..." from output
+                for line in result.stdout.split('\n'):
+                    if line.strip().startswith('workspace ID'):
+                        parts = line.split()
+                        if len(parts) >= 3:
+                            return int(parts[2])
+        except Exception:
+            pass
+        return 0
+
+    def _check_workspace_switch(self):
+        """Check if workspace changed and close disc if so"""
+        new_workspace = self._get_current_workspace()
+        if new_workspace != self.current_workspace:
+            # Workspace switched - close the disc
+            self.close()
+        # Otherwise keep checking
 
     def _update_toggle_state(self, item_id: str, state: bool):
         """Update toggle state in config items"""
@@ -412,7 +446,11 @@ class MouseDiscWindow(QWidget):
             self.close()
 
     def closeEvent(self, event):
-        """Release lock when closing"""
+        """Release lock and stop timers when closing"""
+        # Stop workspace check timer
+        if hasattr(self, 'workspace_check_timer') and self.workspace_check_timer:
+            self.workspace_check_timer.stop()
+        # Release single instance lock
         if hasattr(self, 'lock') and self.lock:
             self.lock.release()
         super().closeEvent(event)
@@ -430,14 +468,24 @@ class MouseDiscWindow(QWidget):
 
         # Mouse back button (button 4) - previous workspace
         if event.button() == Qt.MouseButton.XButton1:
+            # Switch workspace FIRST, then close and reopen to get new cursor position
+            subprocess.run(["hyprctl", "dispatch", "workspace", "-1"])
             self.close()
-            QTimer.singleShot(50, lambda: subprocess.run(["hyprctl", "dispatch", "workspace", "-1"]))
+            # Reopen after workspace switch - main.py --show will get fresh cursor position from hyprland
+            QTimer.singleShot(150, lambda: subprocess.Popen(
+                ["python3", "/home/oboda/Projects/mouse-disc/main.py", "--show"]
+            ))
             return
 
         # Mouse forward button (button 5) - next workspace
         if event.button() == Qt.MouseButton.XButton2:
+            # Switch workspace FIRST, then close and reopen to get new cursor position
+            subprocess.run(["hyprctl", "dispatch", "workspace", "+1"])
             self.close()
-            QTimer.singleShot(50, lambda: subprocess.run(["hyprctl", "dispatch", "workspace", "+1"]))
+            # Reopen after workspace switch - main.py --show will get fresh cursor position from hyprland
+            QTimer.singleShot(150, lambda: subprocess.Popen(
+                ["python3", "/home/oboda/Projects/mouse-disc/main.py", "--show"]
+            ))
             return
 
         # Handle normal clicks
@@ -578,12 +626,23 @@ class MouseDiscWindow(QWidget):
         return False
 
     def _execute_item(self, item: DiscItem) -> bool:
-        """Execute an item's action, using custom handler if available"""
+        """Execute an item's action, using custom handler if available
+
+        Returns True if menu should close, False if it should stay open.
+        """
         # Check if tab has custom action handler
         tab = self.tab_registry.get(item.id)
         if tab and tab.action_handler:
-            tab.action_handler()
-            return True  # Close menu after custom handler
+            # Use tab's execute method which properly handles return value
+            result = tab.execute()
+            # Sync DiscItem toggle_state from tab so UI updates immediately
+            if item.action_type == "toggle":
+                item.toggle_state = tab.toggle_state
+            return result
 
         # Otherwise use default executor
-        return self.executor.execute(item)
+        result = self.executor.execute(item)
+        # Sync DiscItem toggle_state from tab so UI updates immediately
+        if item.action_type == "toggle" and tab:
+            item.toggle_state = tab.toggle_state
+        return result

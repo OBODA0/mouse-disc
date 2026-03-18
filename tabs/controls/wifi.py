@@ -28,11 +28,6 @@ def _draw_icon(painter: QPainter, cx: float, cy: float, size: float, color: QCol
     )
 
 
-def _action():
-    """Toggle WiFi - returns False to keep menu open"""
-    return False  # Keep menu open for toggles
-
-
 def _sync_state() -> bool:
     """Get current WiFi state from system"""
     try:
@@ -49,8 +44,8 @@ def _sync_state() -> bool:
     return False
 
 
-def _toggle():
-    """Execute the toggle action"""
+def _toggle() -> bool:
+    """Execute the toggle action. Returns False to keep menu open."""
     try:
         current_state = _sync_state()
         new_state = not current_state
@@ -58,8 +53,11 @@ def _toggle():
             ["nmcli", "radio", "wifi", "on" if new_state else "off"],
             check=False
         )
+        # Update the tab's toggle_state so UI reflects the change immediately
+        tab.toggle_state = new_state
     except Exception as e:
         print(f"Error toggling wifi: {e}")
+    return False  # Keep menu open for toggles
 
 
 tab = Tab(

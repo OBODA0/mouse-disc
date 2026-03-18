@@ -82,8 +82,8 @@ def _sync_state() -> bool:
     return False
 
 
-def _toggle():
-    """Execute the toggle action"""
+def _toggle() -> bool:
+    """Execute the toggle action. Returns False to keep menu open."""
     try:
         current_state = _sync_state()
         new_state = not current_state
@@ -92,8 +92,11 @@ def _toggle():
             ["pactl", "set-source-mute", "@DEFAULT_SOURCE@", "0" if new_state else "1"],
             check=False
         )
+        # Update the tab's toggle_state so UI reflects the change immediately
+        tab.toggle_state = new_state
     except Exception as e:
         print(f"Error toggling mic: {e}")
+    return False  # Keep menu open for toggles
 
 
 tab = Tab(
