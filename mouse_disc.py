@@ -97,11 +97,11 @@ class RadialMenu(QWidget):
         default_items = [
             DiscItem("browser", "", "", "firefox", "app", "#e8e8e8"),
             DiscItem("terminal", "", "", "kitty", "app", "#e8e8e8"),
-            DiscItem("apps", "", "", "", "menu", "#e8e8e8"),  # Expands to show apps
             DiscItem("editor", "", "", "code", "app", "#e8e8e8"),
             DiscItem("music", "", "", "playerctl play-pause", "command", "#e8e8e8"),
             DiscItem("screenshot", "", "", "grim -g $(slurp) ~/Pictures/$(date +%Y%m%d_%H%M%S).png", "command", "#e8e8e8"),
             DiscItem("lock", "", "", "hyprlock", "command", "#e8e8e8"),
+            DiscItem("apps", "", "", "", "menu", "#e8e8e8"),  # Expands to show apps - LEFT
             DiscItem("close_win", "", "", "kill", "hyprland", "#e8e8e8"),
         ]
 
@@ -584,7 +584,7 @@ class RadialMenu(QWidget):
         self.hovered_index = -1
         self.sub_hovered_index = -1
 
-        # First: find which main item is hovered
+        # Find which main item is hovered
         hovered_main_index = -1
         for i in range(num_items):
             angle = i * angle_per_dot - 90
@@ -595,53 +595,107 @@ class RadialMenu(QWidget):
             dy = pos.y() - dot_y
             distance = (dx ** 2 + dy ** 2) ** 0.5
 
-            if distance < 50:  # Larger hit area for bigger dots
+            if distance < 50:
                 hovered_main_index = i
                 break
 
         self.hovered_index = hovered_main_index
 
-        # Second: if apps is hovered, expand it
-        if hovered_main_index >= 0 and self.items[hovered_main_index].id == "apps":
-            self.expanded_index = hovered_main_index
-
-        # Third: check if hovering over sub-items of expanded menu
+        # Handle expanded menu hover zone
         if self.expanded_index >= 0:
             num_sub = len(self.sub_items)
-            sub_spread = 224  # Double the main spread (same as in _draw_sub_items)
+            sub_spread = 224  # Double the main spread
 
-            # Get the parent angle
+            # Get the parent angle and position
             expanded_angle = self.expanded_index * angle_per_dot - 90
+            parent_x = cx + spread * math.cos(math.radians(expanded_angle))
+            parent_y = cy + spread * math.sin(math.radians(expanded_angle))
 
-            # Calculate the arc angles (same as drawing)
+            # Calculate sub-item positions
             num_main = len(self.items)
             main_angle_step = 360 / num_main
-            sub_angle_step = main_angle_step * 0.6  # 60% of main spacing
+            sub_angle_step = main_angle_step * 0.6
             total_span = (num_sub - 1) * sub_angle_step
             start_angle = expanded_angle - total_span / 2
 
+            sub_positions = []
             for j in range(num_sub):
                 sub_angle = start_angle + j * sub_angle_step
                 sub_x = cx + sub_spread * math.cos(math.radians(sub_angle))
                 sub_y = cy + sub_spread * math.sin(math.radians(sub_angle))
+                sub_positions.append((sub_x, sub_y))
 
+            # Build a connected zone: parent + sub-circles + corridor between them
+            # Check if mouse is near parent
+            dx_parent = pos.x() - parent_x
+            dy_parent = pos.y() - parent_y
+            dist_parent = (dx_parent ** 2 + dy_parent ** 2) ** 0.5
+            near_parent = dist_parent < 60
+
+            # Check if mouse is near any sub-item
+            near_sub = False
+            nearest_sub_idx = -1
+            for j, (sub_x, sub_y) in enumerate(sub_positions):
                 dx_sub = pos.x() - sub_x
                 dy_sub = pos.y() - sub_y
                 dist_sub = (dx_sub ** 2 + dy_sub ** 2) ** 0.5
-
-                if dist_sub < 50:  # Same hit area as main items
-                    self.sub_hovered_index = j
+                if dist_sub < 60:
+                    near_sub = True
+                    nearest_sub_idx = j
                     break
 
-            # If not hovering over sub-items AND not hovering over the parent, collapse
-            if self.sub_hovered_index < 0 and hovered_main_index != self.expanded_index:
-                parent_x = cx + spread * math.cos(math.radians(expanded_angle))
-                parent_y = cy + spread * math.sin(math.radians(expanded_angle))
-                dx_parent = pos.x() - parent_x
-                dy_parent = pos.y() - parent_y
-                dist_parent = (dx_parent ** 2 + dy_parent ** 2) ** 0.5
-                if dist_parent > 60:  # Far from parent, collapse
-                    self.expanded_index = -1
+            # Check if mouse is in the corridor (between parent and sub-items)
+            in_corridor = False
+            if sub_positions:
+                # Check distance to line segments connecting parent to each sub-item
+                for sub_x, sub_y in sub_positions:
+                    # Distance from point to line segment
+                    line_dx = sub_x - parent_x
+                    line_dy = sub_y - parent_y
+                    line_len_sq = line_dx ** 2 + line_dy ** 2
+                    if line_len_sq > 0:
+                        # Project point onto line
+                        t = max(0, min(1, ((pos.x() - parent_x) * line_dx + (pos.y() - parent_y) * line_dy) / line_len_sq))
+                        proj_x = parent_x + t * line_dx
+                        proj_y = parent_y + t * line_dy
+                        dist_to_line = ((pos.x() - proj_x) ** 2 + (pos.y() - proj_y) ** 2) ** 0.5
+                        if dist_to_line < 80:  # Wide corridor
+                            in_corridor = True
+                            break
+
+                # Also check between adjacent sub-items
+                for i in range(len(sub_positions) - 1):
+                    x1, y1 = sub_positions[i]
+                    x2, y2 = sub_positions[i + 1]
+                    line_dx = x2 - x1
+                    line_dy = y2 - y1
+                    line_len_sq = line_dx ** 2 + line_dy ** 2
+                    if line_len_sq > 0:
+                        t = max(0, min(1, ((pos.x() - x1) * line_dx + (pos.y() - y1) * line_dy) / line_len_sq))
+                        proj_x = x1 + t * line_dx
+                        proj_y = y1 + t * line_dy
+                        dist_to_line = ((pos.x() - proj_x) ** 2 + (pos.y() - proj_y) ** 2) ** 0.5
+                        if dist_to_line < 70:
+                            in_corridor = True
+                            break
+
+            # Determine if we're in the expanded zone
+            in_expanded_zone = near_parent or near_sub or in_corridor
+
+            if in_expanded_zone:
+                # If hovering over a specific sub-item, set it
+                if near_sub:
+                    self.sub_hovered_index = nearest_sub_idx
+                else:
+                    self.sub_hovered_index = -1
+            else:
+                # Not in zone, collapse
+                self.expanded_index = -1
+                self.sub_hovered_index = -1
+
+        # If apps is hovered, expand it
+        if hovered_main_index >= 0 and self.items[hovered_main_index].id == "apps":
+            self.expanded_index = hovered_main_index
 
         # Debug: print state when apps is hovered or expanded
         self.update()
