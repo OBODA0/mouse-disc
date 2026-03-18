@@ -90,6 +90,9 @@ class MouseDiscWindow(QWidget):
         self._setup_window()
         self._setup_animations()
 
+        # Sync toggle states with actual system state
+        self._sync_toggle_states()
+
         # Build initial main menu
         self._rebuild_menu_stack()
 
@@ -123,6 +126,129 @@ class MouseDiscWindow(QWidget):
         self.anim.setEndValue(1.0)
         self.anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         QTimer.singleShot(10, self.anim.start)
+
+    def _sync_toggle_states(self):
+        """Check actual system state for toggles and update config"""
+        # Check WiFi state
+        try:
+            result = subprocess.run(
+                ["nmcli", "radio", "wifi"],
+                capture_output=True,
+                text=True,
+                timeout=1
+            )
+            if result.returncode == 0:
+                # Output is "enabled" or "disabled"
+                wifi_enabled = "enabled" in result.stdout.lower()
+                self._update_toggle_state("wifi", wifi_enabled)
+        except Exception:
+            pass
+
+        # Check Bluetooth state
+        try:
+            result = subprocess.run(
+                ["bluetoothctl", "show"],
+                capture_output=True,
+                text=True,
+                timeout=1
+            )
+            if result.returncode == 0:
+                # Look for "Powered: yes" in output
+                bt_enabled = "powered: yes" in result.stdout.lower()
+                self._update_toggle_state("bluetooth", bt_enabled)
+        except Exception:
+            pass
+
+        # Check speaker mute state for DEFAULT sink
+        try:
+            # Get default sink name
+            default_sink = subprocess.run(
+                ["pactl", "info"],
+                capture_output=True,
+                text=True,
+                timeout=1
+            )
+            sink_name = None
+            if default_sink.returncode == 0:
+                for line in default_sink.stdout.split('\n'):
+                    if 'default sink:' in line.lower():
+                        sink_name = line.split(':')[1].strip()
+                        break
+
+            # Get mute state for that specific sink
+            if sink_name:
+                result = subprocess.run(
+                    ["pactl", "list", "sinks"],
+                    capture_output=True,
+                    text=True,
+                    timeout=1
+                )
+                if result.returncode == 0:
+                    in_default_sink = False
+                    for line in result.stdout.split('\n'):
+                        if f'Name: {sink_name}' in line:
+                            in_default_sink = True
+                        elif in_default_sink and line.strip().startswith('Name:'):
+                            in_default_sink = False
+                        if in_default_sink and 'Mute:' in line:
+                            # "Mute: no" = unmuted = red = True
+                            speakers_unmuted = 'no' in line.lower()
+                            self._update_toggle_state("mute_speakers", speakers_unmuted)
+                            break
+        except Exception:
+            pass
+
+        # Check mic mute state for DEFAULT source
+        try:
+            # Get default source name
+            default_source = subprocess.run(
+                ["pactl", "info"],
+                capture_output=True,
+                text=True,
+                timeout=1
+            )
+            source_name = None
+            if default_source.returncode == 0:
+                for line in default_source.stdout.split('\n'):
+                    if 'default source:' in line.lower():
+                        source_name = line.split(':')[1].strip()
+                        break
+
+            # Get mute state for that specific source
+            if source_name:
+                result = subprocess.run(
+                    ["pactl", "list", "sources"],
+                    capture_output=True,
+                    text=True,
+                    timeout=1
+                )
+                if result.returncode == 0:
+                    in_default_source = False
+                    for line in result.stdout.split('\n'):
+                        if f'Name: {source_name}' in line:
+                            in_default_source = True
+                        elif in_default_source and line.strip().startswith('Name:'):
+                            in_default_source = False
+                        if in_default_source and 'Mute:' in line:
+                            mic_unmuted = 'no' in line.lower()
+                            self._update_toggle_state("mute_mic", mic_unmuted)
+                            break
+        except Exception:
+            pass
+
+    def _update_toggle_state(self, item_id: str, state: bool):
+        """Update toggle state in config items"""
+        def update_in_items(items):
+            for item in items:
+                if item.id == item_id:
+                    item.toggle_state = state
+                    return True
+                if item.children:
+                    if update_in_items(item.children):
+                        return True
+            return False
+
+        update_in_items(self.config.items)
 
     def _rebuild_menu_stack(self):
         """Rebuild the menu stack from config"""
@@ -342,6 +468,11 @@ class MouseDiscWindow(QWidget):
 
     def mousePressEvent(self, event):
         """Handle mouse clicks including back/forward buttons"""
+        # Right click - close menu without action (anywhere)
+        if event.button() == Qt.MouseButton.RightButton:
+            self.close()
+            return
+
         # Mouse back button (button 4) - previous workspace
         if event.button() == Qt.MouseButton.XButton1:
             subprocess.run(["hyprctl", "dispatch", "workspace", "-1"])

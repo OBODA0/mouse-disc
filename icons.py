@@ -25,6 +25,8 @@ def draw_icon(painter: QPainter, cx: float, cy: float, size: float, item_id: str
         "zapzap": _draw_zapzap,
         "wifi": _draw_wifi,
         "bluetooth": _draw_bluetooth,
+        "mute_speakers": _draw_mute_speakers,
+        "mute_mic": _draw_mute_mic,
     }
 
     drawer = icon_drawers.get(item_id, _draw_unknown)
@@ -155,6 +157,36 @@ def _draw_bluetooth(painter, cx, cy, size, color):
     painter.drawLine(int(cx - size * 0.3), int(cy + size * 0.25), int(cx), int(cy))
     painter.drawLine(int(cx), int(cy), int(cx + size * 0.3), int(cy - size * 0.25))
     painter.drawLine(int(cx), int(cy), int(cx + size * 0.3), int(cy + size * 0.25))
+
+
+def _draw_mute_speakers(painter, cx, cy, size, color):
+    # Speaker icon with X
+    # Speaker cone
+    painter.drawPolygon([
+        QPoint(int(cx - size * 0.4), int(cy - size * 0.3)),
+        QPoint(int(cx - size * 0.1), int(cy - size * 0.3)),
+        QPoint(int(cx + size * 0.3), int(cy - size * 0.5)),
+        QPoint(int(cx + size * 0.3), int(cy + size * 0.5)),
+        QPoint(int(cx - size * 0.1), int(cy + size * 0.3)),
+        QPoint(int(cx - size * 0.4), int(cy + size * 0.3)),
+    ])
+    # X over speaker (muted indicator)
+    painter.drawLine(int(cx + size * 0.1), int(cy - size * 0.2), int(cx + size * 0.4), int(cy + size * 0.2))
+    painter.drawLine(int(cx + size * 0.4), int(cy - size * 0.2), int(cx + size * 0.1), int(cy + size * 0.2))
+
+
+def _draw_mute_mic(painter, cx, cy, size, color):
+    # Microphone icon with slash
+    # Mic body
+    painter.setBrush(color)
+    painter.drawRoundedRect(int(cx - size * 0.15), int(cy - size * 0.4), int(size * 0.3), int(size * 0.5), 3, 3)
+    # Mic stand
+    painter.drawLine(int(cx), int(cy + size * 0.1), int(cx), int(cy + size * 0.4))
+    painter.drawLine(int(cx - size * 0.25), int(cy + size * 0.4), int(cx + size * 0.25), int(cy + size * 0.4))
+    # Arc at bottom
+    painter.drawArc(int(cx - size * 0.3), int(cy - size * 0.1), int(size * 0.6), int(size * 0.4), 0, 180 * 16)
+    # Slash through mic
+    painter.drawLine(int(cx - size * 0.4), int(cy - size * 0.4), int(cx + size * 0.4), int(cy + size * 0.4))
 
 
 def _draw_unknown(painter, cx, cy, size, color):

@@ -85,6 +85,12 @@ class ActionExecutor:
                 subprocess.run(["nmcli", "radio", "wifi", "on" if new_state else "off"])
             elif item.id == "bluetooth":
                 subprocess.run(["bluetoothctl", "power", "on" if new_state else "off"])
+            elif item.id == "mute_speakers":
+                # new_state=False means muted (white), new_state=True means unmuted (red)
+                # So we invert: mute=1 when new_state=False
+                subprocess.run(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "0" if new_state else "1"])
+            elif item.id == "mute_mic":
+                subprocess.run(["pactl", "set-source-mute", "@DEFAULT_SOURCE@", "0" if new_state else "1"])
             else:
                 # Generic toggle - just notify, actual implementation can be added
                 print(f"Toggle {item.id}: {new_state}")
