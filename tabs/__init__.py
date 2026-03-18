@@ -55,25 +55,25 @@ class TabRegistry:
         """Get all items as DiscItems for backward compatibility
 
         Order (8 items, starting from top at -90 degrees):
-        0: browser (top)
-        1: terminal (top-right)
-        2: editor (right)
-        3: music (bottom-right)
-        4: screenshot (bottom)
+        0: music (top)
+        1: placeholder1 (top-right)
+        2: placeholder2 (right)
+        3: placeholder3 (bottom-right)
+        4: power (bottom)
         5: apps (bottom-left)
         6: controls (left)
-        7: close_win (top-left)
+        7: ai (top-left)
         """
         items = []
         order = [
-            "browser",    # 0 - top
-            "terminal",   # 1 - top-right
-            "editor",     # 2 - right
-            "music",      # 3 - bottom-right
-            "screenshot", # 4 - bottom
-            "apps",       # 5 - bottom-left
-            "controls",   # 6 - left
-            "close_win",  # 7 - top-left
+            "music",       # 0 - top
+            "editor",      # 1 - top-right (placeholder for now)
+            "screenshot",  # 2 - right (placeholder for now)
+            "terminal",    # 3 - bottom-right (placeholder for now)
+            "power",       # 4 - bottom
+            "apps",        # 5 - bottom-left
+            "controls",    # 6 - left
+            "ai",          # 7 - top-left
         ]
 
         for tab_id in order:
@@ -112,8 +112,8 @@ class TabRegistry:
 
         tabs_dir = Path(__file__).parent
 
-        # Import simple tabs
-        simple_tabs = ["browser", "terminal", "editor", "music", "screenshot", "close_win"]
+        # Import simple tabs (music is now a menu with children)
+        simple_tabs = ["terminal", "editor", "screenshot"]
         for tab_name in simple_tabs:
             try:
                 module = importlib.import_module(f"tabs.{tab_name}")
@@ -153,6 +153,54 @@ class TabRegistry:
                         print(f"Error loading controls child {child_name}: {e}")
         except Exception as e:
             print(f"Error loading controls module: {e}")
+
+        # Import music menu and children
+        try:
+            music_module = importlib.import_module("tabs.music")
+            if hasattr(music_module, "tab"):
+                self.register(music_module.tab)
+                # Import children
+                for child_name in ["previous", "backward10", "play_pause", "forward10", "next"]:
+                    try:
+                        child_module = importlib.import_module(f"tabs.music.{child_name}")
+                        if hasattr(child_module, "tab"):
+                            self.register(child_module.tab)
+                    except Exception as e:
+                        print(f"Error loading music child {child_name}: {e}")
+        except Exception as e:
+            print(f"Error loading music module: {e}")
+
+        # Import ai menu and children
+        try:
+            ai_module = importlib.import_module("tabs.ai")
+            if hasattr(ai_module, "tab"):
+                self.register(ai_module.tab)
+                # Import children
+                for child_name in ["perplexity", "gemini", "claude", "chatgpt"]:
+                    try:
+                        child_module = importlib.import_module(f"tabs.ai.{child_name}")
+                        if hasattr(child_module, "tab"):
+                            self.register(child_module.tab)
+                    except Exception as e:
+                        print(f"Error loading ai child {child_name}: {e}")
+        except Exception as e:
+            print(f"Error loading ai module: {e}")
+
+        # Import power menu and children
+        try:
+            power_module = importlib.import_module("tabs.power")
+            if hasattr(power_module, "tab"):
+                self.register(power_module.tab)
+                # Import children
+                for child_name in ["shutdown", "reboot", "suspend", "lock"]:
+                    try:
+                        child_module = importlib.import_module(f"tabs.power.{child_name}")
+                        if hasattr(child_module, "tab"):
+                            self.register(child_module.tab)
+                    except Exception as e:
+                        print(f"Error loading power child {child_name}: {e}")
+        except Exception as e:
+            print(f"Error loading power module: {e}")
 
         self._discovered = True
 
