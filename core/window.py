@@ -82,14 +82,84 @@ class MouseDiscWindow(QWidget):
         self.setWindowOpacity(0.0)
 
     def _setup_animations(self):
-        """Set up fade-in animation"""
+        """Set up fade-in and staggered circle animation"""
         self._animation_progress = 0.0
+        self._item_progress = []  # Animation progress for each item (0.0 to 1.0)
+        self._item_anim_started = False
+        self._item_anim_timer = None
+
+        # Get item count for initial progress array
+        items = self.tab_registry.get_all_items()
+        self._item_progress = [0.0] * len(items)
+
+        # Window fade-in
         self.anim = QPropertyAnimation(self, b"windowOpacity")
         self.anim.setDuration(150)
         self.anim.setStartValue(0.0)
         self.anim.setEndValue(1.0)
         self.anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        # Start item animation after window appears
+        self.anim.finished.connect(self._start_item_animation)
         QTimer.singleShot(10, self.anim.start)
+
+    def _start_item_animation(self):
+        """Start clockwise staggered animation for main menu items"""
+        if not self.menu_stack or not self.menu_stack[0].items:
+            return
+
+        num_items = len(self.menu_stack[0].items)
+        self._item_progress = [0.0] * num_items
+
+        # Animation timing: 2x faster - reveal each item every ~17ms
+        self._current_animating_item = 0
+        self._item_anim_timer = QTimer(self)
+        self._item_anim_timer.timeout.connect(self._animate_items_step)
+        self._item_anim_timer.start(8)  # ~120fps for smoother fast animation
+
+        # Item reveal delay (ms between starting each item)
+        self._item_reveal_delay = 17
+        self._item_reveal_timer = 0
+
+    def _animate_items_step(self):
+        """Update animation progress for all items"""
+        if not self.menu_stack or not self.menu_stack[0].items:
+            self._item_anim_timer.stop()
+            return
+
+        num_items = len(self.menu_stack[0].items)
+        all_done = True
+        progress_speed = 0.3  # 2x faster animation (0-1 per frame)
+
+        for i in range(num_items):
+            if i > self._current_animating_item:
+                # Haven't started this item yet
+                all_done = False
+                continue
+
+            if self._item_progress[i] < 1.0:
+                self._item_progress[i] = min(1.0, self._item_progress[i] + progress_speed)
+                all_done = False
+
+        # Check if we should start the next item
+        self._item_reveal_timer += 8
+        if (self._current_animating_item < num_items - 1 and
+            self._item_reveal_timer >= self._item_reveal_delay):
+            self._current_animating_item += 1
+            self._item_reveal_timer = 0
+
+        self.update()
+
+        if all_done:
+            self._item_anim_timer.stop()
+
+    def _ease_out_elastic(self, t: float) -> float:
+        """Elastic ease-out for pop effect"""
+        if t >= 1.0:
+            return 1.0
+        # Elastic overshoot
+        c4 = (2 * math.pi) / 3
+        return math.pow(2, -10 * t) * math.sin((t * 10 - 0.75) * c4) + 1
 
     def _sync_toggle_states(self):
         """Check actual system state for toggles and update config"""
@@ -233,9 +303,22 @@ class MouseDiscWindow(QWidget):
             if menu.level == 0:
                 angle = i * angle_per_item - 90
 
+            # Animation scale for main menu items (clockwise reveal)
+            anim_scale = 1.0
+            if menu.level == 0 and i < len(self._item_progress):
+                # Use easing for pop effect
+                progress = self._item_progress[i]
+                # Elastic pop: overshoot then settle
+                if progress < 1.0:
+                    anim_scale = self._ease_out_elastic(progress)
+
             # Position
             dot_x = cx + style.spread_radius * math.cos(math.radians(angle))
             dot_y = cy + style.spread_radius * math.sin(math.radians(angle))
+
+            # Skip drawing if not yet animated (for clean reveal)
+            if anim_scale <= 0.01:
+                continue
 
             # Determine color based on state
             is_hovered = (i == menu.hovered_index)
@@ -252,22 +335,25 @@ class MouseDiscWindow(QWidget):
                 else:
                     color = QColor(item.color)
 
-            # Draw dot
-            radius = style.dot_radius + (style.hover_growth if is_hovered else 0)
+            # Draw dot with animation scale
+            base_radius = style.dot_radius + (style.hover_growth if is_hovered else 0)
+            radius = int(base_radius * anim_scale)
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(color)
             painter.drawEllipse(QPoint(int(dot_x), int(dot_y)), radius, radius)
 
-            # Draw icon - use tab's custom drawer if available, else default
+            # Draw icon with animation scale
             icon_color = QColor(self.config.colors.get("icon", "#282828"))
+            icon_size = style.dot_radius * 0.5 * anim_scale
             tab = self.tab_registry.get(item.id)
             if tab and tab.icon_drawer:
-                tab.icon_drawer(painter, dot_x, dot_y, style.dot_radius * 0.5, icon_color)
+                tab.icon_drawer(painter, dot_x, dot_y, icon_size, icon_color)
             else:
-                draw_icon(painter, dot_x, dot_y, style.dot_radius * 0.5, item.id, icon_color)
+                draw_icon(painter, dot_x, dot_y, icon_size, item.id, icon_color)
 
-            # Draw sketch-style label line
-            self._draw_label_line(painter, dot_x, dot_y, item.label, angle, is_hovered)
+            # Draw label line only when animation is nearly complete
+            if anim_scale > 0.7:
+                self._draw_label_line(painter, dot_x, dot_y, item.label, angle, is_hovered, anim_scale)
 
     def _draw_controls_bar(self, painter: QPainter, menu: MenuLevel, cx: float, cy: float,
                            start_angle: float, angle_per_item: float, num_items: int, style):
@@ -301,7 +387,7 @@ class MouseDiscWindow(QWidget):
         painter.drawLine(int(cx + x_size), int(cy - x_size), int(cx - x_size), int(cy + x_size))
 
     def _draw_label_line(self, painter: QPainter, dot_x: float, dot_y: float, label: str,
-                         item_angle: float, is_hovered: bool):
+                         item_angle: float, is_hovered: bool, anim_scale: float = 1.0):
         """Draw an elbow-joint label line: exits at item angle, then bends to cardinal direction
 
         For example: editor (top-right at 45°) -> line exits at 45°, bends to 0° (horizontal),
