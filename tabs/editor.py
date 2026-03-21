@@ -35,7 +35,7 @@ def _action():
 
 tab = Tab(
     id="editor",
-    label="",
+    label="Editor",
     action="code",
     action_type="app",
     color="#e8e8e8",

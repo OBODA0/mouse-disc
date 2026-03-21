@@ -49,7 +49,7 @@ def _draw_icon(painter: QPainter, cx: float, cy: float, size: float, color: QCol
 
 tab = MenuTab(
     id="ai",
-    label="",
+    label="AI",
     color="#e8e8e8",
     children=["perplexity", "gemini", "claude", "chatgpt"],
     icon_drawer=_draw_icon,

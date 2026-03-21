@@ -32,7 +32,7 @@ def _action():
 
 tab = Tab(
     id="terminal",
-    label="",
+    label="Terminal",
     action="kitty",
     action_type="app",
     color="#e8e8e8",

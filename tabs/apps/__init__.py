@@ -22,7 +22,7 @@ def _draw_icon(painter: QPainter, cx: float, cy: float, size: float, color: QCol
 
 tab = MenuTab(
     id="apps",
-    label="",
+    label="Apps",
     color="#e8e8e8",
     children=["obsidian", "antigravity", "zen", "zapzap"],
     icon_drawer=_draw_icon,

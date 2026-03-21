@@ -26,7 +26,7 @@ def _draw_icon(painter: QPainter, cx: float, cy: float, size: float, color: QCol
 
 tab = MenuTab(
     id="power",
-    label="",
+    label="Power",
     color="#e8e8e8",
     children=["shutdown", "reboot", "suspend", "lock"],
     icon_drawer=_draw_icon,

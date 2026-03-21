@@ -266,6 +266,9 @@ class MouseDiscWindow(QWidget):
             else:
                 draw_icon(painter, dot_x, dot_y, style.dot_radius * 0.5, item.id, icon_color)
 
+            # Draw sketch-style label line
+            self._draw_label_line(painter, dot_x, dot_y, item.label, angle, is_hovered)
+
     def _draw_controls_bar(self, painter: QPainter, menu: MenuLevel, cx: float, cy: float,
                            start_angle: float, angle_per_item: float, num_items: int, style):
         """Draw the curved brightness bar"""
@@ -296,6 +299,98 @@ class MouseDiscWindow(QWidget):
         x_size = center_radius * 0.5
         painter.drawLine(int(cx - x_size), int(cy - x_size), int(cx + x_size), int(cy + x_size))
         painter.drawLine(int(cx + x_size), int(cy - x_size), int(cx - x_size), int(cy + x_size))
+
+    def _draw_label_line(self, painter: QPainter, dot_x: float, dot_y: float, label: str,
+                         item_angle: float, is_hovered: bool):
+        """Draw a sketch-style label line extending from the tab with the name on top
+
+        Line extends outward from the tab circle center, snapping to nearest
+        cardinal angle (0°, 45°, 90°, etc.). Text sits on the line like a note.
+        """
+        if not label:
+            return
+
+        # Normalize angle to 0-360
+        norm_angle = item_angle % 360
+        if norm_angle < 0:
+            norm_angle += 360
+
+        # Snap to nearest cardinal angle: 0, 45, 90, 135, 180, 225, 270, 315
+        snapped_angle = round(norm_angle / 45) * 45
+        if snapped_angle >= 360:
+            snapped_angle = 0
+
+        # Line settings - always white for labels
+        line_color = QColor("#ffffff")
+
+        # Setup font for measuring text
+        font = painter.font()
+        font.setPointSize(11)
+        font.setBold(True)
+        painter.setFont(font)
+
+        # Get text dimensions
+        metrics = painter.fontMetrics()
+        text_width = metrics.horizontalAdvance(label)
+        text_height = metrics.height()
+
+        # Line gap from circle edge
+        gap = 8
+        line_extension = text_width * 0.6  # Line extends based on text width
+
+        # Calculate line start (from edge of dot, not center)
+        dot_radius = 35  # Approximate dot radius
+        start_x = dot_x + (dot_radius + gap) * math.cos(math.radians(snapped_angle))
+        start_y = dot_y + (dot_radius + gap) * math.sin(math.radians(snapped_angle))
+
+        # Calculate line end - extends outward based on text length
+        end_x = start_x + line_extension * math.cos(math.radians(snapped_angle))
+        end_y = start_y + line_extension * math.sin(math.radians(snapped_angle))
+
+        # Draw the line
+        pen = QPen(line_color, 2)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.drawLine(int(start_x), int(start_y), int(end_x), int(end_y))
+
+        # Draw text positioned on the line
+        # Position text so it sits "on top" of the line end
+        text_padding = 6
+
+        # Calculate text position based on angle direction
+        if snapped_angle == 0:  # Right
+            text_x = end_x + text_padding
+            text_y = end_y + text_height / 4
+        elif snapped_angle == 45:  # Top-right
+            text_x = end_x + text_padding
+            text_y = end_y - text_height / 2
+        elif snapped_angle == 90:  # Top
+            text_x = end_x - text_width / 2
+            text_y = end_y - text_padding
+        elif snapped_angle == 135:  # Top-left
+            text_x = end_x - text_width - text_padding
+            text_y = end_y - text_height / 2
+        elif snapped_angle == 180:  # Left
+            text_x = end_x - text_width - text_padding
+            text_y = end_y + text_height / 4
+        elif snapped_angle == 225:  # Bottom-left
+            text_x = end_x - text_width - text_padding
+            text_y = end_y + text_height
+        elif snapped_angle == 270:  # Bottom
+            text_x = end_x - text_width / 2
+            text_y = end_y + text_height + text_padding
+        else:  # 315 - Bottom-right
+            text_x = end_x + text_padding
+            text_y = end_y + text_height
+
+        # Draw text with slight offset shadow for depth
+        shadow_color = QColor(0, 0, 0, 100)
+        painter.setPen(shadow_color)
+        painter.drawText(int(text_x + 1), int(text_y + 1), label)
+
+        # Draw main text
+        painter.setPen(line_color)
+        painter.drawText(int(text_x), int(text_y), label)
 
     def mouseMoveEvent(self, event):
         """Handle mouse movement for hover detection"""

@@ -190,7 +190,7 @@ def get_brightness_state() -> float:
 
 tab = MenuTab(
     id="controls",
-    label="",
+    label="Controls",
     color="#e8e8e8",
     children=["wifi", "bluetooth", "mute_speakers", "mute_mic"],
     icon_drawer=_draw_icon,
