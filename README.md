@@ -2,7 +2,7 @@
 
 A radial/pie menu that appears on middle mouse click for quick shortcuts on Hyprland/Linux.
 
-![Demo](demo.png)
+> **Note:** This is the development repository. For installation, use the packaged release.
 
 ## Installation
 
