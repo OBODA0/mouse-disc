@@ -276,17 +276,20 @@ class MouseDiscWindow(QWidget):
         cx = self.disc_center.x() - self.screen_rect.x()
         cy = self.disc_center.y() - self.screen_rect.y()
 
-        # First pass: draw all circles
+        # First pass: draw all circles and their labels (synced animation)
         for menu_level in self.menu_stack:
-            self._draw_menu_level(painter, menu_level, cx, cy, draw_labels=False)
+            # Draw labels with dots for main menu (level 0) to sync animation
+            draw_labels = (menu_level.level == 0)
+            self._draw_menu_level(painter, menu_level, cx, cy, draw_labels=draw_labels)
 
         # Draw center close button
         self._draw_center_close(painter, cx, cy)
 
-        # Second pass: draw labels only for the deepest menu level
+        # Second pass: draw labels only for submenu levels (deepest menu)
         if self.menu_stack:
             deepest_menu = self.menu_stack[-1]
-            self._draw_menu_labels(painter, deepest_menu, cx, cy)
+            if deepest_menu.level > 0:
+                self._draw_menu_labels(painter, deepest_menu, cx, cy)
 
     def _draw_menu_level(self, painter: QPainter, menu: MenuLevel, cx: float, cy: float, draw_labels: bool = True):
         """Draw one level of menu - circles and optionally labels"""
@@ -527,30 +530,25 @@ class MouseDiscWindow(QWidget):
         end_y = elbow_y + line_extension * math.sin(math.radians(line_angle))
 
         # Animate line growing from dot edge outward
-        # anim goes 0->1, line grows from start toward end
+        # anim goes 0->1, line grows proportionally from start to end
         if anim > 0.01:
-            # Current elbow position animates from start toward final elbow
-            curr_elbow_x = start_x + (elbow_x - start_x) * anim
-            curr_elbow_y = start_y + (elbow_y - start_y) * anim
-
-            # Current end position animates from start toward final end
+            # Calculate current end point of the growing line
+            # Line grows proportionally along entire path
             curr_end_x = start_x + (end_x - start_x) * anim
             curr_end_y = start_y + (end_y - start_y) * anim
 
-            # Draw first segment (from dot edge to current elbow)
-            if anim <= 0.5:
-                # First half: grow toward elbow
-                segment_progress = anim * 2  # 0->1 over first half
-                mid_x = start_x + (elbow_x - start_x) * segment_progress
-                mid_y = start_y + (elbow_y - start_y) * segment_progress
-                painter.drawLine(int(start_x), int(start_y), int(mid_x), int(mid_y))
+            # Check if we've reached/passed the elbow
+            elbow_progress = elbow_length / (elbow_length + line_extension)
+
+            if anim <= elbow_progress:
+                # Still in first segment (before elbow)
+                # Draw from start to current position on first segment
+                painter.drawLine(int(start_x), int(start_y), int(curr_end_x), int(curr_end_y))
             else:
-                # Second half: full first segment, grow second segment
+                # Past elbow - draw full first segment + partial second segment
+                # Draw complete first segment
                 painter.drawLine(int(start_x), int(start_y), int(elbow_x), int(elbow_y))
-                # Second segment grows from elbow to end
-                second_progress = (anim - 0.5) * 2  # 0->1 over second half
-                curr_end_x = elbow_x + (end_x - elbow_x) * second_progress
-                curr_end_y = elbow_y + (end_y - elbow_y) * second_progress
+                # Draw second segment from elbow to current position
                 painter.drawLine(int(elbow_x), int(elbow_y), int(curr_end_x), int(curr_end_y))
 
         # Only draw text when animation is nearly complete
