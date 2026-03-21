@@ -839,6 +839,11 @@ class MouseDiscWindow(QWidget):
 
     def _expand_submenu(self, parent_menu_idx: int, child_idx: int, angle: float, item: DiscItem):
         """Expand a submenu with animation"""
+        # Check if this exact submenu is already expanded
+        if hasattr(self, '_current_submenu_id') and self._current_submenu_id == item.id:
+            # Same submenu already open, don't restart animation
+            return
+
         # Remove any submenus below this level
         while len(self.menu_stack) > parent_menu_idx + 1:
             self.menu_stack.pop()
@@ -854,6 +859,9 @@ class MouseDiscWindow(QWidget):
             parent_item=item
         )
         self.menu_stack.append(submenu)
+
+        # Track which submenu is currently open
+        self._current_submenu_id = item.id
 
         # Initialize submenu animation
         num_items = len(submenu.items)
@@ -877,6 +885,9 @@ class MouseDiscWindow(QWidget):
             # Clear expanded_child on parent
             if self.menu_stack:
                 self.menu_stack[-1].expanded_child = None
+        # Clear current submenu tracking
+        if len(self.menu_stack) <= 1:
+            self._current_submenu_id = None
 
     def _collapse_all_submenus(self):
         """Collapse all submenus, keeping only main menu"""
