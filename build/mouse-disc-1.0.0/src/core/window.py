@@ -94,9 +94,9 @@ class MouseDiscWindow(QWidget):
         items = self.tab_registry.get_all_items()
         self._item_progress = [0.0] * len(items)
 
-        # Window fade-in (quicker)
+        # Window fade-in (instant)
         self.anim = QPropertyAnimation(self, b"windowOpacity")
-        self.anim.setDuration(50)
+        self.anim.setDuration(20)
         self.anim.setStartValue(0.0)
         self.anim.setEndValue(1.0)
         self.anim.setEasingCurve(QEasingCurve.Type.OutCubic)
@@ -123,14 +123,14 @@ class MouseDiscWindow(QWidget):
         # Randomize starting position for animation
         self._anim_start_offset = random.randint(0, num_items - 1)
 
-        # Animation timing: SLOW for debugging - reveal each item every ~500ms
+        # Animation timing: ~200ms total for all items
         self._current_animating_item = 0
         self._item_anim_timer = QTimer(self)
         self._item_anim_timer.timeout.connect(self._animate_items_step)
-        self._item_anim_timer.start(50)  # 20fps, slow enough to see
+        self._item_anim_timer.start(16)  # ~60fps
 
-        # Item reveal delay (ms between starting each item)
-        self._item_reveal_delay = 500
+        # Item reveal delay (ms between starting each item) - 20ms stagger
+        self._item_reveal_delay = 20
         self._item_reveal_timer = 0
 
     def _animate_items_step(self):
@@ -141,8 +141,8 @@ class MouseDiscWindow(QWidget):
 
         num_items = len(self.menu_stack[0].items)
         all_done = True
-        dot_progress_speed = 0.05  # Dot animation speed
-        line_progress_speed = 0.02  # Line animation speed (slower)
+        dot_progress_speed = 0.18  # Dot animation speed (completes in ~6 frames = 96ms)
+        line_progress_speed = 0.06  # Line animation speed (completes in ~17 frames = 272ms)
 
         for i in range(num_items):
             if i > self._current_animating_item:
@@ -155,8 +155,8 @@ class MouseDiscWindow(QWidget):
                 self._item_progress[i] = min(1.0, self._item_progress[i] + dot_progress_speed)
                 all_done = False
 
-            # Start line animation once dot is visible enough
-            if self._item_progress[i] > 0.3 and not self._line_anim_started[i]:
+            # Start line animation immediately
+            if self._item_progress[i] > 0.01 and not self._line_anim_started[i]:
                 self._line_anim_started[i] = True
 
             # Animate line extension (slower, continues after dot is done)
@@ -165,7 +165,7 @@ class MouseDiscWindow(QWidget):
                 all_done = False
 
         # Check if we should start the next item
-        self._item_reveal_timer += 50
+        self._item_reveal_timer += 16
         if (self._current_animating_item < num_items - 1 and
             self._item_reveal_timer >= self._item_reveal_delay):
             self._current_animating_item += 1
@@ -571,8 +571,8 @@ class MouseDiscWindow(QWidget):
                 curr_y = elbow_y + (end_y - elbow_y) * second_progress
                 painter.drawLine(int(elbow_x), int(elbow_y), int(curr_x), int(curr_y))
 
-        # Text fade-in animation: starts when line is complete (anim > 0.95)
-        text_fade_start = 0.95
+        # Text fade-in animation: starts when line is nearly complete (anim > 0.8)
+        text_fade_start = 0.8
         if anim > text_fade_start:
             # Calculate text opacity (0->255 over last 5% of animation)
             text_alpha = int(255 * (anim - text_fade_start) / (1 - text_fade_start))
