@@ -16,8 +16,8 @@ from typing import Tuple, Optional
 sys.path.insert(0, str(Path(__file__).parent))
 
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
-from PyQt6.QtGui import QAction, QCursor
-from PyQt6.QtCore import QSocketNotifier
+from PyQt6.QtGui import QAction, QCursor, QIcon, QPixmap, QPainter, QColor
+from PyQt6.QtCore import QSocketNotifier, Qt
 
 from config import ConfigManager
 from core.single_instance import SingleInstanceLock
@@ -123,9 +123,45 @@ class MouseDiscApp:
         self.window.raise_()
         self.window.activateWindow()
 
+    def _create_tray_icon(self) -> QIcon:
+        """Generate a tray icon that looks like a mini mouse disc"""
+        size = 64
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        cx, cy = size // 2, size // 2
+        center_radius = 8
+        dot_radius = 5
+        spread = 20
+
+        # Draw center dot (white)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#ffffff"))
+        painter.drawEllipse(cx - center_radius, cy - center_radius,
+                           center_radius * 2, center_radius * 2)
+
+        # Draw surrounding colored dots like the actual disc
+        colors = ["#ff5050", "#50ff50", "#5050ff", "#ffff50", "#ff50ff", "#50ffff"]
+        import math
+        for i, color in enumerate(colors):
+            angle = i * (360 / len(colors)) - 90
+            rad = math.radians(angle)
+            dx = cx + spread * math.cos(rad)
+            dy = cy + spread * math.sin(rad)
+            painter.setBrush(QColor(color))
+            painter.drawEllipse(int(dx - dot_radius), int(dy - dot_radius),
+                               dot_radius * 2, dot_radius * 2)
+
+        painter.end()
+        return QIcon(pixmap)
+
     def _create_tray(self):
         """Create system tray icon"""
         self.tray = QSystemTrayIcon(self.app)
+        self.tray.setIcon(self._create_tray_icon())
         self.tray.setToolTip("Mouse Disc - Middle click to open")
 
         tray_menu = QMenu()
