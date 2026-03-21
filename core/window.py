@@ -235,6 +235,18 @@ class MouseDiscWindow(QWidget):
         c4 = (2 * math.pi) / 3
         return math.pow(2, -10 * t) * math.sin((t * 10 - 0.75) * c4) + 1
 
+    def _sync_children_toggle_states(self, children):
+        """Sync toggle states for submenu children before displaying them"""
+        for child in children:
+            if child.action_type != "toggle":
+                continue
+            tab = self.tab_registry.get(child.id)
+            if tab and tab.sync_state:
+                # Get actual state from system
+                actual_state = tab.sync_state()
+                tab.toggle_state = actual_state
+                child.toggle_state = actual_state
+
     def _sync_toggle_states(self):
         """Check actual system state for toggles and update config"""
         # Check WiFi state
@@ -874,6 +886,9 @@ class MouseDiscWindow(QWidget):
 
         # Track which submenu is currently open
         self._current_submenu_id = item.id
+
+        # Sync toggle states for submenu children before animation starts
+        self._sync_children_toggle_states(item.children)
 
         # Initialize submenu animation
         num_items = len(submenu.items)
