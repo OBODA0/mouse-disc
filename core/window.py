@@ -176,6 +176,57 @@ class MouseDiscWindow(QWidget):
         if all_done:
             self._item_anim_timer.stop()
 
+    def _animate_submenu_step(self):
+        """Animate submenu items appearing"""
+        if not self.menu_stack or len(self.menu_stack) < 2:
+            # No submenu, stop timer
+            if hasattr(self, '_submenu_anim_timer') and self._submenu_anim_timer:
+                self._submenu_anim_timer.stop()
+                self._submenu_anim_timer = None
+            return
+
+        submenu = self.menu_stack[-1]
+        if not hasattr(submenu, 'anim_progress'):
+            return
+
+        num_items = len(submenu.items)
+        all_done = True
+        dot_speed = 0.18  # Same as main menu
+        line_speed = 0.06  # Same as main menu
+        reveal_delay = 20  # ms between items
+
+        for i in range(num_items):
+            if i > submenu.current_anim_item:
+                all_done = False
+                continue
+
+            # Animate dot
+            if submenu.anim_progress[i] < 1.0:
+                submenu.anim_progress[i] = min(1.0, submenu.anim_progress[i] + dot_speed)
+                all_done = False
+
+            # Start line animation
+            if submenu.anim_progress[i] > 0.01 and not submenu.line_started[i]:
+                submenu.line_started[i] = True
+
+            # Animate line
+            if submenu.line_started[i] and submenu.line_progress[i] < 1.0:
+                submenu.line_progress[i] = min(1.0, submenu.line_progress[i] + line_speed)
+                all_done = False
+
+        # Advance to next item
+        submenu.reveal_timer += 16
+        if submenu.current_anim_item < num_items - 1 and submenu.reveal_timer >= reveal_delay:
+            submenu.current_anim_item += 1
+            submenu.reveal_timer = 0
+
+        self.update()
+
+        if all_done:
+            if hasattr(self, '_submenu_anim_timer') and self._submenu_anim_timer:
+                self._submenu_anim_timer.stop()
+                self._submenu_anim_timer = None
+
     def _ease_out_elastic(self, t: float) -> float:
         """Elastic ease-out for pop effect"""
         if t >= 1.0:
@@ -294,19 +345,20 @@ class MouseDiscWindow(QWidget):
         # Check if submenu is open (stack has more than main menu)
         has_submenu = len(self.menu_stack) > 1
 
-        # First pass: draw all circles and main menu labels (with animation)
-        for menu_level in self.menu_stack:
-            # Draw labels for main menu only if no submenu is open
-            draw_labels = (menu_level.level == 0 and not has_submenu)
-            self._draw_menu_level(painter, menu_level, cx, cy, draw_labels=draw_labels)
+        # First pass: draw main menu circles and labels (with animation)
+        # Submenu circles are drawn in _draw_menu_labels_animated
+        main_menu = self.menu_stack[0] if self.menu_stack else None
+        if main_menu:
+            draw_labels = not has_submenu
+            self._draw_menu_level(painter, main_menu, cx, cy, draw_labels=draw_labels)
 
         # Draw center close button
         self._draw_center_close(painter, cx, cy)
 
-        # Second pass: draw labels for submenu (without animation for now)
+        # Second pass: draw labels for submenu (with animation)
         if has_submenu and self.menu_stack:
             submenu = self.menu_stack[-1]
-            self._draw_menu_labels(painter, submenu, cx, cy)
+            self._draw_menu_labels_animated(painter, submenu, cx, cy)
 
     def _draw_menu_level(self, painter: QPainter, menu: MenuLevel, cx: float, cy: float, draw_labels: bool = True):
         """Draw one level of menu - circles and optionally labels"""
@@ -439,7 +491,7 @@ class MouseDiscWindow(QWidget):
             self._draw_label_line(painter, dot_x, dot_y, label, angle, is_hovered, 1.0)
 
     def _draw_menu_labels_animated(self, painter: QPainter, menu: MenuLevel, cx: float, cy: float):
-        """Draw labels for submenu with line animation"""
+        """Draw labels for submenu with animation"""
         style = menu.get_style(self.config)
         num_items = len(menu.items)
 
@@ -459,17 +511,47 @@ class MouseDiscWindow(QWidget):
             dot_x = cx + style.spread_radius * math.cos(math.radians(angle))
             dot_y = cy + style.spread_radius * math.sin(math.radians(angle))
 
-            # Get label from item or tab
+            # Get animation progress for this item
+            dot_anim = 1.0
+            line_anim = 1.0
+            if hasattr(menu, 'anim_progress') and i < len(menu.anim_progress):
+                dot_anim = menu.anim_progress[i]
+            if hasattr(menu, 'line_progress') and i < len(menu.line_progress):
+                line_anim = menu.line_progress[i]
+
+            # Skip if not yet animating
+            if dot_anim <= 0.01:
+                continue
+
+            # Draw dot with animation
+            is_hovered = (i == menu.hovered_index)
+            if is_hovered:
+                dot_color = QColor(self.config.colors.get("hover", "#ffffff"))
+            else:
+                dot_color = QColor(item.color)
+
+            base_radius = style.dot_radius + (style.hover_growth if is_hovered else 0)
+            radius = int(base_radius * dot_anim)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(dot_color)
+            painter.drawEllipse(QPoint(int(dot_x), int(dot_y)), radius, radius)
+
+            # Draw icon
+            icon_color = QColor(self.config.colors.get("icon", "#282828"))
+            icon_size = style.dot_radius * 0.5 * dot_anim
+            tab = self.tab_registry.get(item.id)
+            if tab and tab.icon_drawer:
+                tab.icon_drawer(painter, dot_x, dot_y, icon_size, icon_color)
+
+            # Get label
             label = item.label
             if not label:
-                tab = self.tab_registry.get(item.id)
                 if tab:
                     label = tab.label
 
-            is_hovered = (i == menu.hovered_index)
-
-            # Use full animation for submenu labels
-            self._draw_label_line(painter, dot_x, dot_y, label, angle, is_hovered, 1.0)
+            # Draw label line with animation
+            if line_anim > 0.01:
+                self._draw_label_line(painter, dot_x, dot_y, label, angle, is_hovered, line_anim)
 
     def _draw_controls_bar(self, painter: QPainter, menu: MenuLevel, cx: float, cy: float,
                            start_angle: float, angle_per_item: float, num_items: int, style):
@@ -756,7 +838,7 @@ class MouseDiscWindow(QWidget):
         return False
 
     def _expand_submenu(self, parent_menu_idx: int, child_idx: int, angle: float, item: DiscItem):
-        """Expand a submenu"""
+        """Expand a submenu with animation"""
         # Remove any submenus below this level
         while len(self.menu_stack) > parent_menu_idx + 1:
             self.menu_stack.pop()
@@ -772,6 +854,21 @@ class MouseDiscWindow(QWidget):
             parent_item=item
         )
         self.menu_stack.append(submenu)
+
+        # Initialize submenu animation
+        num_items = len(submenu.items)
+        submenu.anim_progress = [0.0] * num_items
+        submenu.line_progress = [0.0] * num_items
+        submenu.line_started = [False] * num_items
+        submenu.current_anim_item = 0
+        submenu.reveal_timer = 0
+
+        # Reset and restart submenu animation timer
+        if hasattr(self, '_submenu_anim_timer') and self._submenu_anim_timer:
+            self._submenu_anim_timer.stop()
+        self._submenu_anim_timer = QTimer(self)
+        self._submenu_anim_timer.timeout.connect(self._animate_submenu_step)
+        self._submenu_anim_timer.start(16)  # ~60fps
 
     def _collapse_submenus_below(self, level: int):
         """Collapse all submenus below the given level"""
