@@ -302,10 +302,10 @@ class MouseDiscWindow(QWidget):
 
     def _draw_label_line(self, painter: QPainter, dot_x: float, dot_y: float, label: str,
                          item_angle: float, is_hovered: bool):
-        """Draw a sketch-style label line extending from the tab with the name on top
+        """Draw an elbow-joint label line: exits at item angle, then bends to cardinal direction
 
-        Line extends outward from the tab circle center, snapping to nearest
-        cardinal angle (0°, 45°, 90°, etc.). Text sits on the line like a note.
+        For example: editor (top-right at 45°) -> line exits at 45°, bends to 0° (horizontal),
+        label sits on the horizontal part.
         """
         if not label:
             return
@@ -315,13 +315,39 @@ class MouseDiscWindow(QWidget):
         if norm_angle < 0:
             norm_angle += 360
 
-        # Snap to nearest cardinal angle: 0, 45, 90, 135, 180, 225, 270, 315
-        snapped_angle = round(norm_angle / 45) * 45
-        if snapped_angle >= 360:
-            snapped_angle = 0
+        # Get the base exit angle (snap to nearest 45)
+        base_angle = round(norm_angle / 45) * 45
+        if base_angle >= 360:
+            base_angle = 0
 
-        # Line settings - always white for labels
+        # Map each item to its specific elbow joint direction
+        # Format: exit_angle (direction from circle), line_angle (horizontal direction for label)
+        item_elbows = {
+            # Cardinal directions
+            0: (315, 0),     # Screenshot (right): up-right 45° then right
+            90: (135, 180),  # Power (bottom): down-left 45° then left
+            180: (135, 180), # Controls (left): down-left 45° then left
+            270: (315, 0),   # Music (top): up-right 45° then right
+            # Diagonal directions
+            45: (45, 0),     # Terminal (bottom-right): down-right then right
+            135: (135, 180), # Apps (bottom-left): down-left then left
+            225: (225, 180), # AI (top-left): up-left then left
+            315: (315, 0),   # Editor (top-right): up-right then right
+        }
+
+        if base_angle in item_elbows:
+            exit_angle, line_angle = item_elbows[base_angle]
+        else:
+            # Fallback - shouldn't happen with 45° snapping
+            exit_angle = base_angle
+            line_angle = 0 if base_angle < 180 else 180
+
+        # Line settings - always white
         line_color = QColor("#ffffff")
+        pen = QPen(line_color, 2)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
 
         # Setup font for measuring text
         font = painter.font()
@@ -334,56 +360,46 @@ class MouseDiscWindow(QWidget):
         text_width = metrics.horizontalAdvance(label)
         text_height = metrics.height()
 
-        # Line gap from circle edge
+        # Gap from circle edge
         gap = 8
-        line_extension = text_width * 0.6  # Line extends based on text width
+        elbow_length = 25  # Length of first segment before bend
 
-        # Calculate line start (from edge of dot, not center)
-        dot_radius = 35  # Approximate dot radius
-        start_x = dot_x + (dot_radius + gap) * math.cos(math.radians(snapped_angle))
-        start_y = dot_y + (dot_radius + gap) * math.sin(math.radians(snapped_angle))
+        # Calculate line start (from edge of dot)
+        dot_radius = 35
+        start_x = dot_x + (dot_radius + gap) * math.cos(math.radians(exit_angle))
+        start_y = dot_y + (dot_radius + gap) * math.sin(math.radians(exit_angle))
 
-        # Calculate line end - extends outward based on text length
-        end_x = start_x + line_extension * math.cos(math.radians(snapped_angle))
-        end_y = start_y + line_extension * math.sin(math.radians(snapped_angle))
+        # Calculate elbow point (where the bend happens)
+        elbow_x = start_x + elbow_length * math.cos(math.radians(exit_angle))
+        elbow_y = start_y + elbow_length * math.sin(math.radians(exit_angle))
 
-        # Draw the line
-        pen = QPen(line_color, 2)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        painter.setPen(pen)
-        painter.drawLine(int(start_x), int(start_y), int(end_x), int(end_y))
+        # Calculate end point (extend based on text length from elbow)
+        line_extension = text_width + 10  # Text width plus some padding
+        end_x = elbow_x + line_extension * math.cos(math.radians(line_angle))
+        end_y = elbow_y + line_extension * math.sin(math.radians(line_angle))
 
-        # Draw text positioned on the line
-        # Position text so it sits "on top" of the line end
+        # Draw elbow joint: two segments
+        painter.drawLine(int(start_x), int(start_y), int(elbow_x), int(elbow_y))
+        painter.drawLine(int(elbow_x), int(elbow_y), int(end_x), int(end_y))
+
+        # Draw label on the horizontal/vertical line (the straight part)
         text_padding = 6
 
-        # Calculate text position based on angle direction
-        if snapped_angle == 0:  # Right
-            text_x = end_x + text_padding
-            text_y = end_y + text_height / 4
-        elif snapped_angle == 45:  # Top-right
-            text_x = end_x + text_padding
-            text_y = end_y - text_height / 2
-        elif snapped_angle == 90:  # Top
-            text_x = end_x - text_width / 2
-            text_y = end_y - text_padding
-        elif snapped_angle == 135:  # Top-left
-            text_x = end_x - text_width - text_padding
-            text_y = end_y - text_height / 2
-        elif snapped_angle == 180:  # Left
-            text_x = end_x - text_width - text_padding
-            text_y = end_y + text_height / 4
-        elif snapped_angle == 225:  # Bottom-left
-            text_x = end_x - text_width - text_padding
-            text_y = end_y + text_height
-        elif snapped_angle == 270:  # Bottom
-            text_x = end_x - text_width / 2
-            text_y = end_y + text_height + text_padding
-        else:  # 315 - Bottom-right
-            text_x = end_x + text_padding
-            text_y = end_y + text_height
+        # Position text based on line_angle (the straight part)
+        if line_angle == 0:  # Horizontal right
+            text_x = elbow_x + line_extension / 2 - text_width / 2
+            text_y = elbow_y - text_padding
+        elif line_angle == 90:  # Vertical up
+            text_x = elbow_x - text_width / 2
+            text_y = elbow_y - line_extension / 2 - text_height / 2
+        elif line_angle == 180:  # Horizontal left
+            text_x = elbow_x - line_extension / 2 - text_width / 2
+            text_y = elbow_y - text_padding
+        else:  # line_angle == 270, vertical down
+            text_x = elbow_x - text_width / 2
+            text_y = elbow_y + line_extension / 2 + text_height / 2
 
-        # Draw text with slight offset shadow for depth
+        # Draw text with slight shadow for depth
         shadow_color = QColor(0, 0, 0, 100)
         painter.setPen(shadow_color)
         painter.drawText(int(text_x + 1), int(text_y + 1), label)
