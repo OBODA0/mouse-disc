@@ -1,6 +1,7 @@
 """Mouse Disc main window - refactored to use modular tabs"""
 import sys
 import math
+import random
 import subprocess
 from pathlib import Path
 from typing import List, Tuple, Optional
@@ -108,12 +109,15 @@ class MouseDiscWindow(QWidget):
         self.anim.start()
 
     def _start_item_animation(self):
-        """Start clockwise staggered animation for main menu items"""
+        """Start staggered animation for main menu items from random starting angle"""
         if not self.menu_stack or not self.menu_stack[0].items:
             return
 
         num_items = len(self.menu_stack[0].items)
         self._item_progress = [0.0] * num_items
+
+        # Randomize starting position for animation
+        self._anim_start_offset = random.randint(0, num_items - 1)
 
         # Animation timing: 2x faster - reveal each item every ~17ms
         self._current_animating_item = 0
@@ -312,12 +316,21 @@ class MouseDiscWindow(QWidget):
             if menu.level == 0:
                 angle = i * angle_per_item - 90
 
-            # Animation scale for main menu items (clockwise reveal)
+            # Animation scale for main menu items (reveal from random start position)
             anim_scale = 1.0
-            if menu.level == 0 and i < len(self._item_progress):
-                # Use easing for pop effect
+            if menu.level == 0 and hasattr(self, '_anim_start_offset'):
+                # Map item index to animation progress with random offset
+                num_items = len(menu.items)
+                anim_index = (i + self._anim_start_offset) % num_items
+                if anim_index < len(self._item_progress):
+                    # Use easing for pop effect
+                    progress = self._item_progress[anim_index]
+                    # Elastic pop: overshoot then settle
+                    if progress < 1.0:
+                        anim_scale = self._ease_out_elastic(progress)
+            elif menu.level == 0 and i < len(self._item_progress):
+                # Fallback: clockwise reveal
                 progress = self._item_progress[i]
-                # Elastic pop: overshoot then settle
                 if progress < 1.0:
                     anim_scale = self._ease_out_elastic(progress)
 
@@ -360,8 +373,8 @@ class MouseDiscWindow(QWidget):
             else:
                 draw_icon(painter, dot_x, dot_y, icon_size, item.id, icon_color)
 
-            # Draw label line only if requested and animation is nearly complete
-            if draw_labels and anim_scale > 0.7:
+            # Draw label line with animation - starts as soon as dot is visible
+            if draw_labels and anim_scale > 0.01:
                 self._draw_label_line(painter, dot_x, dot_y, item.label, angle, is_hovered, anim_scale)
 
     def _draw_menu_labels(self, painter: QPainter, menu: MenuLevel, cx: float, cy: float):
@@ -437,6 +450,7 @@ class MouseDiscWindow(QWidget):
                          item_angle: float, is_hovered: bool, anim_scale: float = 1.0):
         """Draw an elbow-joint label line: exits at item angle, then bends to cardinal direction
 
+        Line animates from dot center outward, synced with item animation.
         For example: editor (top-right at 45°) -> line exits at 45°, bends to 0° (horizontal),
         label sits on the horizontal part.
         """
@@ -448,31 +462,25 @@ class MouseDiscWindow(QWidget):
         if norm_angle < 0:
             norm_angle += 360
 
-        # Get the base exit angle (snap to nearest 45)
-        base_angle = round(norm_angle / 45) * 45
-        if base_angle >= 360:
-            base_angle = 0
-
         # Map angle ranges to elbow joint directions (Qt coordinate system)
         # Qt: 0=right, 90=down, 180=left, 270=up
-        #
-        # Use ORIGINAL norm_angle for vertical direction (up/down)
-        # Use SNAPPED base_angle for horizontal direction (left/right)
-        #
-        # Vertical: 1-180 = down, 181-360 = up
-        # Horizontal: 90-269 = left, 270-90 = right
-        if 0 < norm_angle <= 180:       # Bottom half -> exit down
-            if 90 <= base_angle < 270:  # Left side
-                exit_angle = 135        # Down-left
-                line_angle = 180        # Left
-            else:                       # Right side
+        # Use actual angle (not rounded) to determine quadrant
+        # Special case: exactly 0° (right) -> up-right to avoid ambiguity
+        if norm_angle == 0:
+            exit_angle = 315            # Up-right
+            line_angle = 0              # Right
+        elif 0 < norm_angle <= 180:     # Bottom half -> exit down
+            if norm_angle < 90:         # Bottom-right (0-90)
                 exit_angle = 45         # Down-right
                 line_angle = 0          # Right
+            else:                       # Bottom-left (90-180)
+                exit_angle = 135        # Down-left
+                line_angle = 180        # Left
         else:                           # Top half -> exit up
-            if 90 <= base_angle < 270:  # Left side
+            if norm_angle < 270:        # Top-left (180-270)
                 exit_angle = 225        # Up-left
                 line_angle = 180        # Left
-            else:                       # Right side
+            else:                       # Top-right (270-360)
                 exit_angle = 315        # Up-right
                 line_angle = 0          # Right
 
@@ -498,49 +506,80 @@ class MouseDiscWindow(QWidget):
         gap = 8
         elbow_length = 25  # Length of first segment before bend
 
-        # Calculate line start (from edge of dot)
+        # Animation: line grows from dot center outward based on anim_scale
+        # anim_scale goes 0->1 as item appears
+        anim = max(0.0, min(1.0, anim_scale))
+
+        # Calculate full line geometry (fixed positions)
         dot_radius = 35
+
+        # Point where line exits the dot (fixed start point)
         start_x = dot_x + (dot_radius + gap) * math.cos(math.radians(exit_angle))
         start_y = dot_y + (dot_radius + gap) * math.sin(math.radians(exit_angle))
 
-        # Calculate elbow point (where the bend happens)
+        # Elbow point (where the bend happens)
         elbow_x = start_x + elbow_length * math.cos(math.radians(exit_angle))
         elbow_y = start_y + elbow_length * math.sin(math.radians(exit_angle))
 
-        # Calculate end point (extend based on text length from elbow)
+        # End point (extend based on text length from elbow)
         line_extension = text_width + 10  # Text width plus some padding
         end_x = elbow_x + line_extension * math.cos(math.radians(line_angle))
         end_y = elbow_y + line_extension * math.sin(math.radians(line_angle))
 
-        # Draw elbow joint: two segments
-        painter.drawLine(int(start_x), int(start_y), int(elbow_x), int(elbow_y))
-        painter.drawLine(int(elbow_x), int(elbow_y), int(end_x), int(end_y))
+        # Animate line growing from dot edge outward
+        # anim goes 0->1, line grows from start toward end
+        if anim > 0.01:
+            # Current elbow position animates from start toward final elbow
+            curr_elbow_x = start_x + (elbow_x - start_x) * anim
+            curr_elbow_y = start_y + (elbow_y - start_y) * anim
 
-        # Draw label on the horizontal/vertical line (the straight part)
-        text_padding = 6
+            # Current end position animates from start toward final end
+            curr_end_x = start_x + (end_x - start_x) * anim
+            curr_end_y = start_y + (end_y - start_y) * anim
 
-        # Position text based on line_angle (the straight part)
-        if line_angle == 0:  # Horizontal right
-            text_x = elbow_x + line_extension / 2 - text_width / 2
-            text_y = elbow_y - text_padding
-        elif line_angle == 90:  # Vertical up
-            text_x = elbow_x - text_width / 2
-            text_y = elbow_y - line_extension / 2 - text_height / 2
-        elif line_angle == 180:  # Horizontal left
-            text_x = elbow_x - line_extension / 2 - text_width / 2
-            text_y = elbow_y - text_padding
-        else:  # line_angle == 270, vertical down
-            text_x = elbow_x - text_width / 2
-            text_y = elbow_y + line_extension / 2 + text_height / 2
+            # Draw first segment (from dot edge to current elbow)
+            if anim <= 0.5:
+                # First half: grow toward elbow
+                segment_progress = anim * 2  # 0->1 over first half
+                mid_x = start_x + (elbow_x - start_x) * segment_progress
+                mid_y = start_y + (elbow_y - start_y) * segment_progress
+                painter.drawLine(int(start_x), int(start_y), int(mid_x), int(mid_y))
+            else:
+                # Second half: full first segment, grow second segment
+                painter.drawLine(int(start_x), int(start_y), int(elbow_x), int(elbow_y))
+                # Second segment grows from elbow to end
+                second_progress = (anim - 0.5) * 2  # 0->1 over second half
+                curr_end_x = elbow_x + (end_x - elbow_x) * second_progress
+                curr_end_y = elbow_y + (end_y - elbow_y) * second_progress
+                painter.drawLine(int(elbow_x), int(elbow_y), int(curr_end_x), int(curr_end_y))
 
-        # Draw text with slight shadow for depth
-        shadow_color = QColor(0, 0, 0, 100)
-        painter.setPen(shadow_color)
-        painter.drawText(int(text_x + 1), int(text_y + 1), label)
+        # Only draw text when animation is nearly complete
+        if anim > 0.7:
+            # Draw label on the horizontal/vertical line (the straight part)
+            text_padding = 6
 
-        # Draw main text
-        painter.setPen(line_color)
-        painter.drawText(int(text_x), int(text_y), label)
+            # Position text based on line_angle (at final position)
+            if line_angle == 0:  # Horizontal right
+                text_x = elbow_x + line_extension / 2 - text_width / 2
+                text_y = elbow_y - text_padding
+            elif line_angle == 90:  # Vertical up
+                text_x = elbow_x - text_width / 2
+                text_y = elbow_y - line_extension / 2 - text_height / 2
+            elif line_angle == 180:  # Horizontal left
+                text_x = elbow_x - line_extension / 2 - text_width / 2
+                text_y = elbow_y - text_padding
+            else:  # line_angle == 270, vertical down
+                text_x = elbow_x - text_width / 2
+                text_y = elbow_y + line_extension / 2 + text_height / 2
+
+            # Draw text with slight shadow for depth
+            shadow_color = QColor(0, 0, 0, 100)
+            painter.setPen(shadow_color)
+            painter.drawText(int(text_x + 1), int(text_y + 1), label)
+
+            # Draw main text
+            painter.setPen(line_color)
+            painter.drawText(int(text_x), int(text_y), label)
 
     def mouseMoveEvent(self, event):
         """Handle mouse movement for hover detection"""
