@@ -504,6 +504,10 @@ class MouseDiscWindow(QWidget):
         total_span = (num_items - 1) * angle_per_item
         start_angle = menu.parent_angle - total_span / 2
 
+        # Draw controls brightness bar if needed
+        if menu.parent_item and menu.parent_item.id == "controls":
+            self._draw_controls_bar(painter, menu, cx, cy, start_angle, angle_per_item, num_items, style)
+
         for i, item in enumerate(menu.items):
             angle = start_angle + i * angle_per_item
 
@@ -525,10 +529,18 @@ class MouseDiscWindow(QWidget):
 
             # Draw dot with animation
             is_hovered = (i == menu.hovered_index)
-            if is_hovered:
-                dot_color = QColor(self.config.colors.get("hover", "#ffffff"))
+            is_toggle_on = item.action_type == "toggle" and item.toggle_state
+
+            if is_toggle_on:
+                if is_hovered:
+                    dot_color = QColor(self.config.colors.get("toggle_on_hover", "#ff6060"))
+                else:
+                    dot_color = QColor(self.config.colors.get("toggle_on", "#ff5050"))
             else:
-                dot_color = QColor(item.color)
+                if is_hovered:
+                    dot_color = QColor(self.config.colors.get("hover", "#ffffff"))
+                else:
+                    dot_color = QColor(item.color)
 
             base_radius = style.dot_radius + (style.hover_growth if is_hovered else 0)
             radius = int(base_radius * dot_anim)
