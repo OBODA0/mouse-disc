@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Mouse Disc
+Comment=Radial menu for quick shortcuts
+Exec=python3 /home/oboda/Projects/mouse-disc/main.py
+Icon=input-mouse
+Type=Application
+Categories=System;Utility;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true
