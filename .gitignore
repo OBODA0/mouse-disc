@@ -46,3 +46,12 @@ htmlcov/
 config.json
 *.log
 .claude/
+
+# Build tools and artifacts
+*.AppImage
+linuxdeploy*
+appimage-builder*
+appimagetool*
+runtime-*
+AppDir/
+build-appimage/
