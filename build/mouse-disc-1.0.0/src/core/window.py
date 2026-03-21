@@ -571,8 +571,13 @@ class MouseDiscWindow(QWidget):
                 curr_y = elbow_y + (end_y - elbow_y) * second_progress
                 painter.drawLine(int(elbow_x), int(elbow_y), int(curr_x), int(curr_y))
 
-        # Only draw text when animation is nearly complete
-        if anim > 0.7:
+        # Text fade-in animation: starts when line is complete (anim > 0.95)
+        text_fade_start = 0.95
+        if anim > text_fade_start:
+            # Calculate text opacity (0->255 over last 5% of animation)
+            text_alpha = int(255 * (anim - text_fade_start) / (1 - text_fade_start))
+            text_alpha = max(0, min(255, text_alpha))
+
             # Draw label on the horizontal/vertical line (the straight part)
             text_padding = 6
 
@@ -590,13 +595,16 @@ class MouseDiscWindow(QWidget):
                 text_x = elbow_x - text_width / 2
                 text_y = elbow_y + line_extension / 2 + text_height / 2
 
-            # Draw text with slight shadow for depth
-            shadow_color = QColor(0, 0, 0, 100)
-            painter.setPen(shadow_color)
+            # Draw text with fade-in alpha
+            fade_color = QColor(line_color.red(), line_color.green(), line_color.blue(), text_alpha)
+            shadow_fade = QColor(0, 0, 0, int(100 * text_alpha / 255))
+
+            # Draw shadow with fade
+            painter.setPen(shadow_fade)
             painter.drawText(int(text_x + 1), int(text_y + 1), label)
 
-            # Draw main text
-            painter.setPen(line_color)
+            # Draw main text with fade
+            painter.setPen(fade_color)
             painter.drawText(int(text_x), int(text_y), label)
 
     def mouseMoveEvent(self, event):
