@@ -30,9 +30,10 @@ def draw_brightness_bar(
     bar_thickness: float,
     colors: dict,
     first_angle: float = 150,
-    last_angle: float = 210
+    last_angle: float = 210,
+    anim_progress: float = 1.0
 ):
-    """Draw the curved brightness bar for controls submenu
+    """Draw the curved brightness bar for controls submenu with animation
 
     Args:
         painter: QPainter instance
@@ -43,6 +44,7 @@ def draw_brightness_bar(
         colors: Dict with 'controls_bar_empty' and 'controls_bar_fill' colors
         first_angle: Angle of first item (default 150 = bottom-left for controls)
         last_angle: Angle of last item (default 210 = top-left for controls)
+        anim_progress: Animation progress 0.0 to 1.0 (bar grows from center)
     """
     # Qt system: 0=right, positive=counter-clockwise
     qt_start_angle = -last_angle
@@ -54,31 +56,57 @@ def draw_brightness_bar(
 
     rect_size = bar_radius * 2
 
-    # Calculate brightness span (fills from bottom upward)
-    brightness_span = qt_span * brightness_level
-    empty_span = qt_span - brightness_span
+    # Calculate total span and center angle
+    total_span = abs(qt_span)
+    center_angle = qt_start_angle + qt_span / 2
 
-    # Draw empty portion (dark gray, from bottom/qt_start_angle upward)
-    if empty_span > 0:
-        pen = QPen(empty_color, bar_thickness)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        painter.setPen(pen)
-        painter.drawArc(
-            int(cx - bar_radius), int(cy - bar_radius),
-            int(rect_size), int(rect_size),
-            int(qt_start_angle * 16), int(empty_span * 16)
-        )
+    # Animation: bar grows from center outward
+    anim = max(0.0, min(1.0, anim_progress))
+    current_half_span = (total_span / 2) * anim
 
-    # Draw filled portion (white, from end of empty to top)
-    if brightness_span > 0:
+    # Calculate current angles based on animation progress
+    curr_start_angle = center_angle - current_half_span
+    curr_end_angle = center_angle + current_half_span
+    curr_span = curr_end_angle - curr_start_angle
+
+    # Calculate brightness within the visible portion
+    # Map brightness to the currently visible arc
+    if anim < 1.0:
+        # During animation, show full brightness color (growing from center)
         pen = QPen(fill_color, bar_thickness)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         painter.setPen(pen)
         painter.drawArc(
             int(cx - bar_radius), int(cy - bar_radius),
             int(rect_size), int(rect_size),
-            int((qt_start_angle + empty_span) * 16), int(brightness_span * 16)
+            int(curr_start_angle * 16), int(curr_span * 16)
         )
+    else:
+        # Full animation complete - show actual brightness level
+        brightness_span = qt_span * brightness_level
+        empty_span = qt_span - brightness_span
+
+        # Draw empty portion (dark gray, from bottom/qt_start_angle upward)
+        if empty_span > 0:
+            pen = QPen(empty_color, bar_thickness)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            painter.drawArc(
+                int(cx - bar_radius), int(cy - bar_radius),
+                int(rect_size), int(rect_size),
+                int(qt_start_angle * 16), int(empty_span * 16)
+            )
+
+        # Draw filled portion (white, from end of empty to top)
+        if brightness_span > 0:
+            pen = QPen(fill_color, bar_thickness)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            painter.drawArc(
+                int(cx - bar_radius), int(cy - bar_radius),
+                int(rect_size), int(rect_size),
+                int((qt_start_angle + empty_span) * 16), int(brightness_span * 16)
+            )
 
 
 def check_brightness_bar_click(

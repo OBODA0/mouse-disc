@@ -391,9 +391,9 @@ class MouseDiscWindow(QWidget):
             total_span = (num_items - 1) * angle_per_item
             start_angle = menu.parent_angle - total_span / 2
 
-        # Draw curved bar for controls submenu
+        # Draw curved bar for controls submenu (no animation for main menu level)
         if menu.level > 0 and menu.parent_item and menu.parent_item.id == "controls":
-            self._draw_controls_bar(painter, menu, cx, cy, start_angle, angle_per_item, num_items, style)
+            self._draw_controls_bar(painter, menu, cx, cy, start_angle, angle_per_item, num_items, style, 1.0)
 
         for i, item in enumerate(menu.items):
             angle = start_angle + i * angle_per_item
@@ -516,9 +516,11 @@ class MouseDiscWindow(QWidget):
         total_span = (num_items - 1) * angle_per_item
         start_angle = menu.parent_angle - total_span / 2
 
-        # Draw controls brightness bar if needed
+        # Draw controls brightness bar if needed (with animation)
         if menu.parent_item and menu.parent_item.id == "controls":
-            self._draw_controls_bar(painter, menu, cx, cy, start_angle, angle_per_item, num_items, style)
+            # Use average animation progress of all items for bar animation
+            avg_anim = sum(menu.anim_progress) / len(menu.anim_progress) if hasattr(menu, 'anim_progress') else 1.0
+            self._draw_controls_bar(painter, menu, cx, cy, start_angle, angle_per_item, num_items, style, avg_anim)
 
         for i, item in enumerate(menu.items):
             angle = start_angle + i * angle_per_item
@@ -578,8 +580,9 @@ class MouseDiscWindow(QWidget):
                 self._draw_label_line(painter, dot_x, dot_y, label, angle, is_hovered, line_anim)
 
     def _draw_controls_bar(self, painter: QPainter, menu: MenuLevel, cx: float, cy: float,
-                           start_angle: float, angle_per_item: float, num_items: int, style):
-        """Draw the curved brightness bar"""
+                           start_angle: float, angle_per_item: float, num_items: int, style,
+                           anim_progress: float = 1.0):
+        """Draw the curved brightness bar with animation"""
         from tabs.controls import draw_brightness_bar
 
         bar_radius = style.spread_radius * 1.5
@@ -592,7 +595,7 @@ class MouseDiscWindow(QWidget):
         draw_brightness_bar(
             painter, cx, cy, self.brightness_level,
             bar_radius, bar_thickness, self.config.colors,
-            first_angle, last_angle
+            first_angle, last_angle, anim_progress
         )
 
     def _draw_center_close(self, painter: QPainter, cx: float, cy: float):
