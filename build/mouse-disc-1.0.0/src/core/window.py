@@ -452,23 +452,23 @@ class MouseDiscWindow(QWidget):
         if base_angle >= 360:
             base_angle = 0
 
-        # Map angle ranges to elbow joint directions:
+        # Map angle ranges to elbow joint directions (user's coordinate system)
         # 0-90: up-right, then right
         # 91-179: up-left, then left
         # 181-270: down-left, then left
         # 271-359: down-right, then right
         if 0 <= base_angle <= 90:
-            exit_angle = 315 if base_angle >= 45 else 315  # Up-right
-            line_angle = 0  # Right
+            exit_angle = 315  # Up-right
+            line_angle = 0    # Right
         elif 91 <= base_angle <= 179:
-            exit_angle = 225 if base_angle <= 135 else 225  # Up-left
+            exit_angle = 225  # Up-left
             line_angle = 180  # Left
         elif 181 <= base_angle <= 270:
-            exit_angle = 135 if base_angle <= 225 else 135  # Down-left
+            exit_angle = 135  # Down-left
             line_angle = 180  # Left
         else:  # 271-359
-            exit_angle = 45 if base_angle >= 315 else 45  # Down-right
-            line_angle = 0  # Right
+            exit_angle = 45   # Down-right
+            line_angle = 0    # Right
 
         # Line settings - always white
         line_color = QColor("#ffffff")
