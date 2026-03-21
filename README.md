@@ -6,48 +6,38 @@ A radial/pie menu that appears on middle mouse click for quick shortcuts on Hypr
 
 ## Installation
 
-### For Users (Non-coders)
-
-#### Option 1: System Install (Recommended)
+### Quick Install (Recommended)
 
 ```bash
-# Clone or download the project
-cd ~/Projects/mouse-disc
+# Extract to home directory
+tar xzf mouse-disc-1.0.0.tar.gz -C ~
 
-# Build the package
-make package
-
-# Install system-wide (requires sudo)
-make install
-```
-
-This installs to `/opt/mouse-disc` and creates a `mouse-disc` command.
-
-#### Option 2: User Install (No sudo needed)
-
-```bash
-# Build and extract to your home directory
-cd ~/Projects/mouse-disc
-make package
-tar xzf build/mouse-disc-1.0.0.tar.gz -C ~
-
-# Create symlink
+# Add to your PATH
 mkdir -p ~/.local/bin
 ln -sf ~/mouse-disc-1.0.0/mouse-disc ~/.local/bin/
 
-# Add to autostart
+# Add to autostart (optional)
 cp ~/mouse-disc-1.0.0/mouse-disc.desktop ~/.config/autostart/
 ```
 
-### For Developers
+Now run `mouse-disc` or find it in your app menu.
+
+### System-wide Install (requires sudo)
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Run from source
-python3 main.py
+cd ~/Projects/mouse-disc
+make package
+sudo make install
 ```
+
+### Build from Source
+
+```bash
+cd ~/Projects/mouse-disc
+make package
+```
+
+Package will be in `build/mouse-disc-1.0.0.tar.gz`
 
 ## Auto-start on Login
 

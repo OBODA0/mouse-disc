@@ -5,7 +5,7 @@ VERSION := 1.0.0
 PKG_NAME := mouse-disc-$(VERSION)
 BUILD_DIR := build
 
-.PHONY: all clean install uninstall package appimage
+.PHONY: all clean install uninstall user-install package appimage
 
 all: package
 
@@ -48,7 +48,7 @@ $(BUILD_DIR)/$(PKG_NAME): clean
 	@echo "Done!"
 
 install: $(BUILD_DIR)/$(PKG_NAME)
-	@echo "Installing Mouse Disc..."
+	@echo "Installing Mouse Disc system-wide..."
 
 	# Install to /opt
 	sudo mkdir -p /opt/mouse-disc
@@ -62,13 +62,34 @@ install: $(BUILD_DIR)/$(PKG_NAME)
 	sudo mkdir -p /usr/share/applications
 	sudo cp mouse-disc.desktop /usr/share/applications/
 	sudo sed -i 's|Exec=.*|Exec=/opt/mouse-disc/mouse-disc|' /usr/share/applications/mouse-disc.desktop
-	sudo sed -i 's|Icon=.*|Icon=/opt/mouse-disc/icon.svg|' /usr/share/applications/mouse-disc.desktop
 
 	# Update desktop database
 	sudo update-desktop-database /usr/share/applications 2>/dev/null || true
 
 	@echo "Mouse Disc installed to /opt/mouse-disc"
 	@echo "Run with: mouse-disc"
+
+user-install: $(BUILD_DIR)/$(PKG_NAME)
+	@echo "Installing Mouse Disc for current user..."
+
+	# Extract to home
+	tar xzf $(BUILD_DIR)/$(PKG_NAME).tar.gz -C ~
+
+	# Create symlink
+	mkdir -p ~/.local/bin
+	ln -sf ~/$(PKG_NAME)/mouse-disc ~/.local/bin/
+
+	# Copy desktop entry
+	mkdir -p ~/.local/share/applications ~/.config/autostart
+	sed 's|Exec=.*|Exec='"$$HOME"'/.local/bin/mouse-disc|' mouse-disc.desktop > ~/.local/share/applications/mouse-disc.desktop
+	cp ~/.local/share/applications/mouse-disc.desktop ~/.config/autostart/
+
+	# Update desktop database
+	update-desktop-database ~/.local/share/applications 2>/dev/null || true
+
+	@echo "Mouse Disc installed to ~/$(PKG_NAME)"
+	@echo "Run with: mouse-disc"
+	@echo "Auto-start enabled"
 
 uninstall:
 	@echo "Uninstalling Mouse Disc..."
