@@ -1,0 +1,5 @@
+#!/bin/bash
+APPDIR="$(dirname "$(readlink -f "$0")")/../.."
+export PYTHONPATH="$APPDIR/usr/src:$PYTHONPATH"
+export PATH="$APPDIR/usr/bin:$PATH"
+python3 "$APPDIR/usr/src/main.py" "$@"

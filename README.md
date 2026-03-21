@@ -6,7 +6,26 @@ A radial/pie menu that appears on middle mouse click for quick shortcuts on Hypr
 
 ## Installation
 
-### Quick Install (Recommended)
+### Option 1: AppImage (Universal - Any Linux Distro)
+
+Download the latest AppImage from [Releases](https://github.com/OBODA0/mouse-disc/releases):
+
+```bash
+# Download (replace with actual version)
+wget https://github.com/OBODA0/mouse-disc/releases/download/v1.0.0/mouse-disc-1.0.0-x86_64.AppImage
+
+# Make executable
+chmod +x mouse-disc-1.0.0-x86_64.AppImage
+
+# Run
+./mouse-disc-1.0.0-x86_64.AppImage
+
+# Optional: Move to Applications folder
+mkdir -p ~/Applications
+mv mouse-disc-1.0.0-x86_64.AppImage ~/Applications/
+```
+
+### Option 2: AUR (Arch Linux)
 
 ```bash
 # Extract to home directory

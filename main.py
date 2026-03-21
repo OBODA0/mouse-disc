@@ -73,6 +73,35 @@ class MouseDiscApp:
 
         self._setup_signal_handler()
         self._create_tray()
+        self._check_input_group()
+
+    def _check_input_group(self):
+        """Check if user is in input group for global middle-click"""
+        try:
+            import subprocess
+            import getpass
+
+            # Get current user's groups
+            result = subprocess.run(
+                ["id", "-Gn", getpass.getuser()],
+                capture_output=True,
+                text=True,
+                timeout=1
+            )
+            if result.returncode == 0:
+                groups = result.stdout.strip().split()
+                if "input" not in groups:
+                    # Show notification about limited functionality
+                    self.tray.showMessage(
+                        "Mouse Disc",
+                        "Middle-click requires 'input' group for global capture.\n"
+                        "Run: sudo usermod -aG input $USER && logout\n"
+                        "Or use tray icon to open menu.",
+                        QSystemTrayIcon.MessageIcon.Information,
+                        10000  # 10 seconds
+                    )
+        except Exception:
+            pass
 
     def _setup_signal_handler(self):
         """Setup Unix socket to receive show signals from middle-click"""
