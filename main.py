@@ -4,12 +4,11 @@ Mouse Disc - Radial menu for Hyprland
 Middle-click to open, hover to select
 
 Usage:
-  main.py --daemon    # Start background daemon (run at startup)
-  main.py --show      # Show menu instantly (called from hyprland)
-  main.py             # Tray mode
+  main.py             # Tray mode (with signal support for middle-click)
 """
 import sys
 import subprocess
+import socket
 from pathlib import Path
 from typing import Tuple, Optional
 
@@ -18,11 +17,26 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 from PyQt6.QtGui import QAction, QCursor
+from PyQt6.QtCore import QSocketNotifier
 
 from config import ConfigManager
 from core.single_instance import SingleInstanceLock
 from core.window import MouseDiscWindow
-from core.daemon import SignalHandler, send_show_signal
+
+SOCKET_PATH = "/tmp/mouse-disc.sock"
+
+
+def send_show_signal() -> bool:
+    """Send show signal to running instance. Returns True if successful."""
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(0.1)
+        sock.connect(SOCKET_PATH)
+        sock.send(b"show")
+        sock.close()
+        return True
+    except (FileNotFoundError, ConnectionRefusedError, socket.timeout):
+        return False
 
 
 def get_cursor_pos_from_hyprland() -> Tuple[int, int]:
@@ -43,56 +57,8 @@ def get_cursor_pos_from_hyprland() -> Tuple[int, int]:
     return 0, 0
 
 
-class MouseDiscDaemon:
-    """Daemon that keeps QApplication warm for instant show"""
-
-    def __init__(self):
-        self.app = QApplication(sys.argv)
-        self.app.setApplicationName("mouse-disc-daemon")
-        self.app.setQuitOnLastWindowClosed(False)
-
-        self.config_manager = ConfigManager()
-        self.window: Optional[MouseDiscWindow] = None
-        self.lock: Optional[SingleInstanceLock] = None
-
-        # Setup signal handler for instant show
-        self.signal_handler = SignalHandler()
-        self.signal_handler.show_requested.connect(self._on_show_requested)
-
-    def _on_show_requested(self, cursor_x: int, cursor_y: int):
-        """Handle show request from client"""
-        # Close existing window if open
-        if self.window is not None:
-            self.window.close()
-            self.window = None
-
-        # Get fresh lock
-        self.lock = SingleInstanceLock()
-        if not self.lock.acquire():
-            self.lock = None
-            return
-
-        # Reload config
-        self.config_manager.config = self.config_manager.load()
-
-        # Create and show window
-        self.window = MouseDiscWindow(self.config_manager, self.lock, cursor_x, cursor_y)
-        self.window.show()
-        self.window.raise_()
-        self.window.activateWindow()
-
-    def run(self):
-        """Run the daemon"""
-        print("Mouse Disc daemon started")
-        print("Use 'main.py --show' to display menu instantly")
-        try:
-            sys.exit(self.app.exec())
-        finally:
-            self.signal_handler.cleanup()
-
-
 class MouseDiscApp:
-    """Main application class (tray mode + daemon)"""
+    """Main application class (tray mode with signal support)"""
 
     def __init__(self):
         self.app = QApplication(sys.argv)
@@ -102,16 +68,40 @@ class MouseDiscApp:
         self.config_manager = ConfigManager()
         self.window: Optional[MouseDiscWindow] = None
         self.lock: Optional[SingleInstanceLock] = None
+        self.socket_server = None
+        self.socket_notifier = None
 
-        # Setup signal handler for instant show from middle-click
-        self.signal_handler = SignalHandler()
-        self.signal_handler.show_requested.connect(self._on_show_requested)
-
+        self._setup_signal_handler()
         self._create_tray()
 
-    def _on_show_requested(self, cursor_x: int, cursor_y: int):
-        """Handle show request from middle-click"""
-        self._show_at(cursor_x, cursor_y)
+    def _setup_signal_handler(self):
+        """Setup Unix socket to receive show signals from middle-click"""
+        import os
+        socket_path = Path(SOCKET_PATH)
+        if socket_path.exists():
+            socket_path.unlink()
+
+        self.socket_server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.socket_server.bind(str(socket_path))
+        self.socket_server.listen(5)
+        self.socket_server.setblocking(False)
+
+        self.socket_notifier = QSocketNotifier(
+            self.socket_server.fileno(),
+            QSocketNotifier.Type.Read
+        )
+        self.socket_notifier.activated.connect(self._handle_signal)
+
+    def _handle_signal(self):
+        """Handle incoming show signal"""
+        try:
+            conn, _ = self.socket_server.accept()
+            data = conn.recv(32).decode().strip()
+            conn.close()
+            if data == "show":
+                self.show_menu()
+        except Exception:
+            pass
 
     def _show_at(self, cursor_x: int, cursor_y: int):
         """Show menu at specific position"""
@@ -173,63 +163,27 @@ class MouseDiscApp:
 
     def run(self):
         """Run the application"""
-        print("Mouse Disc started - tray mode with daemon")
-        try:
-            sys.exit(self.app.exec())
-        finally:
-            self.signal_handler.cleanup()
+        print("Mouse Disc started - tray mode")
+        sys.exit(self.app.exec())
 
 
 def main():
-    """Entry point"""
-    if len(sys.argv) > 1 and sys.argv[1] == "--daemon":
-        # Daemon mode - keep warm for instant show
-        lock = SingleInstanceLock()
-        if not lock.acquire():
-            print("Daemon already running")
+    """Entry point - tray mode with signal support"""
+    # Check if tray is already running via socket
+    socket_path = Path(SOCKET_PATH)
+    if socket_path.exists():
+        # Try to send signal to existing tray
+        if send_show_signal():
             sys.exit(0)
+        # Socket exists but no response - stale socket, remove it
+        try:
+            socket_path.unlink()
+        except:
+            pass
 
-        daemon = MouseDiscDaemon()
-        # Keep lock by storing it
-        daemon._daemon_lock = lock
-        daemon.run()
-
-    elif len(sys.argv) > 1 and sys.argv[1] == "--show":
-        # Show mode - try daemon first, fall back to direct
-        cursor_x, cursor_y = get_cursor_pos_from_hyprland()
-
-        # Try to signal daemon (instant)
-        if send_show_signal(cursor_x, cursor_y):
-            sys.exit(0)
-
-        # Daemon not running - start it in background and show
-        print("Starting daemon...")
-        subprocess.Popen([sys.executable, __file__, "--daemon"],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL)
-
-        # Wait a bit for daemon to start, then signal
-        import time
-        time.sleep(0.15)
-
-        # Retry signal
-        if send_show_signal(cursor_x, cursor_y):
-            sys.exit(0)
-
-        # Fallback: direct mode (slow but works)
-        print("Fallback to direct mode")
-        app = QApplication(sys.argv)
-        config_manager = ConfigManager()
-        lock = SingleInstanceLock()
-        if lock.acquire():
-            window = MouseDiscWindow(config_manager, lock, cursor_x, cursor_y)
-            window.show()
-            sys.exit(app.exec())
-
-    else:
-        # Tray mode
-        app = MouseDiscApp()
-        app.run()
+    # No tray running - start one
+    app = MouseDiscApp()
+    app.run()
 
 
 if __name__ == "__main__":

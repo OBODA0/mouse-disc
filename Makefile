@@ -66,10 +66,25 @@ install: $(BUILD_DIR)/$(PKG_NAME)
 	# Update desktop database
 	sudo update-desktop-database /usr/share/applications 2>/dev/null || true
 
+	# Auto-configure Hyprland if detected
+	@if [ -n "$$HYPRLAND_INSTANCE_SIGNATURE" ] || [ "$$(echo $$XDG_CURRENT_DESKTOP | tr '[:upper:]' '[:lower:]')" = "hyprland" ]; then \
+		echo "Detected Hyprland - configuring middle-click binding..."; \
+		mkdir -p ~/.config/hypr; \
+		if ! grep -q "mouse-disc.*--show" ~/.config/hypr/hyprland.conf 2>/dev/null; then \
+			echo "" >> ~/.config/hypr/hyprland.conf; \
+			echo "# Mouse Disc - auto-configured middle-click binding" >> ~/.config/hypr/hyprland.conf; \
+			echo "bind = , mouse:274, exec, /usr/local/bin/mouse-disc --show" >> ~/.config/hypr/hyprland.conf; \
+			echo "Added middle-click binding to ~/.config/hypr/hyprland.conf"; \
+			echo "Please reload Hyprland config with: hyprctl reload"; \
+		else \
+			echo "Mouse Disc binding already exists in Hyprland config"; \
+		fi \
+	fi
+
 	@echo "Mouse Disc installed to /opt/mouse-disc"
 	@echo "Run with: mouse-disc"
 
-user-install: $(BUILD_DIR)/$(PKG_NAME)
+user-install: $(BUILD_DIR)/$(PKG_NAME).tar.gz
 	@echo "Installing Mouse Disc for current user..."
 
 	# Extract to home
@@ -86,6 +101,20 @@ user-install: $(BUILD_DIR)/$(PKG_NAME)
 
 	# Update desktop database
 	update-desktop-database ~/.local/share/applications 2>/dev/null || true
+
+	# Auto-configure Hyprland if detected
+	@if [ -n "$$HYPRLAND_INSTANCE_SIGNATURE" ] || [ "$$(echo $$XDG_CURRENT_DESKTOP | tr '[:upper:]' '[:lower:]')" = "hyprland" ]; then \
+		echo "Detected Hyprland - configuring middle-click binding..."; \
+		mkdir -p ~/.config/hypr; \
+		if ! grep -q "mouse-disc.*--show" ~/.config/hypr/hyprland.conf 2>/dev/null; then \
+			echo "" >> ~/.config/hypr/hyprland.conf; \
+			echo "# Mouse Disc - auto-configured middle-click binding" >> ~/.config/hypr/hyprland.conf; \
+			echo "bind = , mouse:274, exec, $$HOME/.local/bin/mouse-disc --show" >> ~/.config/hypr/hyprland.conf; \
+			echo "Added middle-click binding to ~/.config/hypr/hyprland.conf"; \
+		else \
+			echo "Mouse Disc binding already exists in Hyprland config"; \
+		fi \
+	fi
 
 	@echo "Mouse Disc installed to ~/$(PKG_NAME)"
 	@echo "Run with: mouse-disc"

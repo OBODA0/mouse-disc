@@ -373,11 +373,12 @@ class MouseDiscWindow(QWidget):
             return
 
         # Calculate angle step
+        main_items = len(self.menu_stack[0].items)
         if menu.level == 0:
             angle_per_item = 360 / num_items
             start_angle = -90
         else:
-            angle_per_item = 360 / len(self.menu_stack[0].items) * style.sub_spacing_factor
+            angle_per_item = 360 / main_items * style.sub_spacing_factor
             total_span = (num_items - 1) * angle_per_item
             start_angle = menu.parent_angle - total_span / 2
 
@@ -452,23 +453,28 @@ class MouseDiscWindow(QWidget):
         if base_angle >= 360:
             base_angle = 0
 
-        # Map angle ranges to elbow joint directions (user's coordinate system)
-        # 0-90: up-right, then right
-        # 91-179: up-left, then left
-        # 181-270: down-left, then left
-        # 271-359: down-right, then right
-        if 0 <= base_angle <= 90:
-            exit_angle = 315  # Up-right
-            line_angle = 0    # Right
-        elif 91 <= base_angle <= 179:
-            exit_angle = 225  # Up-left
-            line_angle = 180  # Left
-        elif 181 <= base_angle <= 270:
-            exit_angle = 135  # Down-left
-            line_angle = 180  # Left
-        else:  # 271-359
-            exit_angle = 45   # Down-right
-            line_angle = 0    # Right
+        # Map angle ranges to elbow joint directions (Qt coordinate system)
+        # Qt: 0=right, 90=down, 180=left, 270=up
+        #
+        # Use ORIGINAL norm_angle for vertical direction (up/down)
+        # Use SNAPPED base_angle for horizontal direction (left/right)
+        #
+        # Vertical: 1-180 = down, 181-360 = up
+        # Horizontal: 90-269 = left, 270-90 = right
+        if 0 < norm_angle <= 180:       # Bottom half -> exit down
+            if 90 <= base_angle < 270:  # Left side
+                exit_angle = 135        # Down-left
+                line_angle = 180        # Left
+            else:                       # Right side
+                exit_angle = 45         # Down-right
+                line_angle = 0          # Right
+        else:                           # Top half -> exit up
+            if 90 <= base_angle < 270:  # Left side
+                exit_angle = 225        # Up-left
+                line_angle = 180        # Left
+            else:                       # Right side
+                exit_angle = 315        # Up-right
+                line_angle = 0          # Right
 
         # Line settings - always white
         line_color = QColor("#ffffff")
