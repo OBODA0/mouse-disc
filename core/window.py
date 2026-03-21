@@ -291,20 +291,22 @@ class MouseDiscWindow(QWidget):
         cx = self.disc_center.x() - self.screen_rect.x()
         cy = self.disc_center.y() - self.screen_rect.y()
 
-        # First pass: draw all circles and their labels (synced animation)
+        # Check if submenu is open (stack has more than main menu)
+        has_submenu = len(self.menu_stack) > 1
+
+        # First pass: draw all circles and main menu labels (with animation)
         for menu_level in self.menu_stack:
-            # Draw labels with dots for main menu (level 0) to sync animation
-            draw_labels = (menu_level.level == 0)
+            # Draw labels for main menu only if no submenu is open
+            draw_labels = (menu_level.level == 0 and not has_submenu)
             self._draw_menu_level(painter, menu_level, cx, cy, draw_labels=draw_labels)
 
         # Draw center close button
         self._draw_center_close(painter, cx, cy)
 
-        # Second pass: draw labels only for submenu levels (deepest menu)
-        if self.menu_stack:
-            deepest_menu = self.menu_stack[-1]
-            if deepest_menu.level > 0:
-                self._draw_menu_labels(painter, deepest_menu, cx, cy)
+        # Second pass: draw labels for submenu (without animation for now)
+        if has_submenu and self.menu_stack:
+            submenu = self.menu_stack[-1]
+            self._draw_menu_labels(painter, submenu, cx, cy)
 
     def _draw_menu_level(self, painter: QPainter, menu: MenuLevel, cx: float, cy: float, draw_labels: bool = True):
         """Draw one level of menu - circles and optionally labels"""
@@ -434,6 +436,39 @@ class MouseDiscWindow(QWidget):
 
             # Always draw labels for deepest menu
             is_hovered = (i == menu.hovered_index)
+            self._draw_label_line(painter, dot_x, dot_y, label, angle, is_hovered, 1.0)
+
+    def _draw_menu_labels_animated(self, painter: QPainter, menu: MenuLevel, cx: float, cy: float):
+        """Draw labels for submenu with line animation"""
+        style = menu.get_style(self.config)
+        num_items = len(menu.items)
+
+        if num_items == 0:
+            return
+
+        # Calculate angle step
+        main_items = len(self.menu_stack[0].items)
+        angle_per_item = 360 / main_items * style.sub_spacing_factor
+        total_span = (num_items - 1) * angle_per_item
+        start_angle = menu.parent_angle - total_span / 2
+
+        for i, item in enumerate(menu.items):
+            angle = start_angle + i * angle_per_item
+
+            # Position
+            dot_x = cx + style.spread_radius * math.cos(math.radians(angle))
+            dot_y = cy + style.spread_radius * math.sin(math.radians(angle))
+
+            # Get label from item or tab
+            label = item.label
+            if not label:
+                tab = self.tab_registry.get(item.id)
+                if tab:
+                    label = tab.label
+
+            is_hovered = (i == menu.hovered_index)
+
+            # Use full animation for submenu labels
             self._draw_label_line(painter, dot_x, dot_y, label, angle, is_hovered, 1.0)
 
     def _draw_controls_bar(self, painter: QPainter, menu: MenuLevel, cx: float, cy: float,
