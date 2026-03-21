@@ -116,17 +116,21 @@ class MouseDiscWindow(QWidget):
         num_items = len(self.menu_stack[0].items)
         self._item_progress = [0.0] * num_items
 
+        # Separate line animation progress for each item (slower)
+        self._line_progress = [0.0] * num_items
+        self._line_anim_started = [False] * num_items
+
         # Randomize starting position for animation
         self._anim_start_offset = random.randint(0, num_items - 1)
 
-        # Animation timing: 2x faster - reveal each item every ~17ms
+        # Animation timing: SLOW for debugging - reveal each item every ~500ms
         self._current_animating_item = 0
         self._item_anim_timer = QTimer(self)
         self._item_anim_timer.timeout.connect(self._animate_items_step)
-        self._item_anim_timer.start(8)  # ~120fps for smoother fast animation
+        self._item_anim_timer.start(50)  # 20fps, slow enough to see
 
         # Item reveal delay (ms between starting each item)
-        self._item_reveal_delay = 17
+        self._item_reveal_delay = 500
         self._item_reveal_timer = 0
 
     def _animate_items_step(self):
@@ -137,7 +141,8 @@ class MouseDiscWindow(QWidget):
 
         num_items = len(self.menu_stack[0].items)
         all_done = True
-        progress_speed = 0.3  # 2x faster animation (0-1 per frame)
+        dot_progress_speed = 0.05  # Dot animation speed
+        line_progress_speed = 0.02  # Line animation speed (slower)
 
         for i in range(num_items):
             if i > self._current_animating_item:
@@ -145,12 +150,22 @@ class MouseDiscWindow(QWidget):
                 all_done = False
                 continue
 
+            # Animate dot appearance
             if self._item_progress[i] < 1.0:
-                self._item_progress[i] = min(1.0, self._item_progress[i] + progress_speed)
+                self._item_progress[i] = min(1.0, self._item_progress[i] + dot_progress_speed)
+                all_done = False
+
+            # Start line animation once dot is visible enough
+            if self._item_progress[i] > 0.3 and not self._line_anim_started[i]:
+                self._line_anim_started[i] = True
+
+            # Animate line extension (slower, continues after dot is done)
+            if self._line_anim_started[i] and self._line_progress[i] < 1.0:
+                self._line_progress[i] = min(1.0, self._line_progress[i] + line_progress_speed)
                 all_done = False
 
         # Check if we should start the next item
-        self._item_reveal_timer += 8
+        self._item_reveal_timer += 50
         if (self._current_animating_item < num_items - 1 and
             self._item_reveal_timer >= self._item_reveal_delay):
             self._current_animating_item += 1
@@ -376,9 +391,12 @@ class MouseDiscWindow(QWidget):
             else:
                 draw_icon(painter, dot_x, dot_y, icon_size, item.id, icon_color)
 
-            # Draw label line with animation - starts as soon as dot is visible
-            if draw_labels and anim_scale > 0.01:
-                self._draw_label_line(painter, dot_x, dot_y, item.label, angle, is_hovered, anim_scale)
+            # Draw label line with its own slower animation
+            if draw_labels:
+                # Use separate line progress if available, otherwise fall back to dot scale
+                line_anim = self._line_progress[anim_index] if hasattr(self, '_line_progress') and anim_index < len(self._line_progress) else anim_scale
+                if line_anim > 0.01:
+                    self._draw_label_line(painter, dot_x, dot_y, item.label, angle, is_hovered, line_anim)
 
     def _draw_menu_labels(self, painter: QPainter, menu: MenuLevel, cx: float, cy: float):
         """Draw labels for a menu level (always shown, no animation delay)"""
