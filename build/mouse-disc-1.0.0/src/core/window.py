@@ -548,26 +548,28 @@ class MouseDiscWindow(QWidget):
         end_y = elbow_y + line_extension * math.sin(math.radians(line_angle))
 
         # Animate line growing from dot edge outward
-        # anim goes 0->1, line grows proportionally from start to end
+        # Two-phase animation: first angled segment, then horizontal segment
         if anim > 0.01:
-            # Calculate current end point of the growing line
-            # Line grows proportionally along entire path
-            curr_end_x = start_x + (end_x - start_x) * anim
-            curr_end_y = start_y + (end_y - start_y) * anim
-
-            # Check if we've reached/passed the elbow
-            elbow_progress = elbow_length / (elbow_length + line_extension)
+            # Calculate where the elbow is along the total path
+            total_length = elbow_length + line_extension
+            elbow_progress = elbow_length / total_length
 
             if anim <= elbow_progress:
-                # Still in first segment (before elbow)
-                # Draw from start to current position on first segment
-                painter.drawLine(int(start_x), int(start_y), int(curr_end_x), int(curr_end_y))
+                # Phase 1: Growing angled segment toward elbow
+                # anim goes 0->elbow_progress, map to 0->1 for first segment
+                segment_progress = anim / elbow_progress
+                curr_x = start_x + (elbow_x - start_x) * segment_progress
+                curr_y = start_y + (elbow_y - start_y) * segment_progress
+                painter.drawLine(int(start_x), int(start_y), int(curr_x), int(curr_y))
             else:
-                # Past elbow - draw full first segment + partial second segment
+                # Phase 2: Angled segment complete, growing horizontal segment
                 # Draw complete first segment
                 painter.drawLine(int(start_x), int(start_y), int(elbow_x), int(elbow_y))
-                # Draw second segment from elbow to current position
-                painter.drawLine(int(elbow_x), int(elbow_y), int(curr_end_x), int(curr_end_y))
+                # anim goes elbow_progress->1, map to 0->1 for second segment
+                second_progress = (anim - elbow_progress) / (1 - elbow_progress)
+                curr_x = elbow_x + (end_x - elbow_x) * second_progress
+                curr_y = elbow_y + (end_y - elbow_y) * second_progress
+                painter.drawLine(int(elbow_x), int(elbow_y), int(curr_x), int(curr_y))
 
         # Only draw text when animation is nearly complete
         if anim > 0.7:
