@@ -64,48 +64,46 @@ def draw_brightness_bar(
     anim = max(0.0, min(1.0, anim_progress))
     current_half_span = (total_span / 2) * anim
 
-    # Calculate current angles based on animation progress
+    # Calculate current visible arc based on animation
     curr_start_angle = center_angle - current_half_span
     curr_end_angle = center_angle + current_half_span
-    curr_span = curr_end_angle - curr_start_angle
 
-    # Calculate brightness within the visible portion
-    # Map brightness to the currently visible arc
-    if anim < 1.0:
-        # During animation, show full brightness color (growing from center)
-        pen = QPen(fill_color, bar_thickness)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        painter.setPen(pen)
-        painter.drawArc(
-            int(cx - bar_radius), int(cy - bar_radius),
-            int(rect_size), int(rect_size),
-            int(curr_start_angle * 16), int(curr_span * 16)
-        )
-    else:
-        # Full animation complete - show actual brightness level
-        brightness_span = qt_span * brightness_level
-        empty_span = qt_span - brightness_span
+    # Calculate brightness proportions
+    brightness_span = qt_span * brightness_level
+    empty_span = qt_span - brightness_span
+    brightness_start = qt_start_angle + empty_span  # Where brightness portion starts
 
-        # Draw empty portion (dark gray, from bottom/qt_start_angle upward)
-        if empty_span > 0:
+    # Clip the visible arc to the current animation progress
+    visible_start = max(curr_start_angle, qt_start_angle)
+    visible_end = min(curr_end_angle, qt_start_angle + qt_span)
+
+    if visible_end > visible_start:
+        # Draw the visible portion with brightness level
+        # Split visible arc into empty and brightness portions
+        visible_brightness_start = max(visible_start, brightness_start)
+
+        # Empty portion (dark gray)
+        if visible_start < visible_brightness_start:
+            empty_visible_span = visible_brightness_start - visible_start
             pen = QPen(empty_color, bar_thickness)
             pen.setCapStyle(Qt.PenCapStyle.RoundCap)
             painter.setPen(pen)
             painter.drawArc(
                 int(cx - bar_radius), int(cy - bar_radius),
                 int(rect_size), int(rect_size),
-                int(qt_start_angle * 16), int(empty_span * 16)
+                int(visible_start * 16), int(empty_visible_span * 16)
             )
 
-        # Draw filled portion (white, from end of empty to top)
-        if brightness_span > 0:
+        # Brightness portion (white)
+        if visible_brightness_start < visible_end:
+            brightness_visible_span = visible_end - visible_brightness_start
             pen = QPen(fill_color, bar_thickness)
             pen.setCapStyle(Qt.PenCapStyle.RoundCap)
             painter.setPen(pen)
             painter.drawArc(
                 int(cx - bar_radius), int(cy - bar_radius),
                 int(rect_size), int(rect_size),
-                int((qt_start_angle + empty_span) * 16), int(brightness_span * 16)
+                int(visible_brightness_start * 16), int(brightness_visible_span * 16)
             )
 
 
