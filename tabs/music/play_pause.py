@@ -50,7 +50,7 @@ def _action():
 
 tab = Tab(
     id="play_pause",
-    label="",
+    label="Play",
     action="playerctl play-pause",
     action_type="command",
     color="#e8e8e8",

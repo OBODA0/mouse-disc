@@ -58,7 +58,7 @@ def _action():
 
 tab = Tab(
     id="chatgpt",
-    label="",
+    label="GPT",
     action="https://chat.openai.com",
     action_type="app",
     color="#e8e8e8",

@@ -29,7 +29,7 @@ def _action():
 
 tab = Tab(
     id="zen",
-    label="",
+    label="Zen",
     action="zen-browser",
     action_type="app",
     color="#e8e8e8",

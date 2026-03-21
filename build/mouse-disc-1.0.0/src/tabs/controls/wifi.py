@@ -62,7 +62,7 @@ def _toggle() -> bool:
 
 tab = Tab(
     id="wifi",
-    label="",
+    label="WiFi",
     action="wifi",
     action_type="toggle",
     color="#e8e8e8",

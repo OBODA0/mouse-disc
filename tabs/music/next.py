@@ -36,7 +36,7 @@ def _action():
 
 tab = Tab(
     id="next",
-    label="",
+    label="Next",
     action="playerctl next",
     action_type="command",
     color="#e8e8e8",

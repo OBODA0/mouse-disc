@@ -55,7 +55,7 @@ def _action():
 
 tab = Tab(
     id="claude",
-    label="",
+    label="Claud",
     action="https://claude.ai",
     action_type="app",
     color="#e8e8e8",

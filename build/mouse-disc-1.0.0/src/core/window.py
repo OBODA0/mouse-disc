@@ -272,15 +272,20 @@ class MouseDiscWindow(QWidget):
         cx = self.disc_center.x() - self.screen_rect.x()
         cy = self.disc_center.y() - self.screen_rect.y()
 
-        # Draw each menu level
+        # First pass: draw all circles
         for menu_level in self.menu_stack:
-            self._draw_menu_level(painter, menu_level, cx, cy)
+            self._draw_menu_level(painter, menu_level, cx, cy, draw_labels=False)
 
         # Draw center close button
         self._draw_center_close(painter, cx, cy)
 
-    def _draw_menu_level(self, painter: QPainter, menu: MenuLevel, cx: float, cy: float):
-        """Draw one level of menu"""
+        # Second pass: draw labels only for the deepest menu level
+        if self.menu_stack:
+            deepest_menu = self.menu_stack[-1]
+            self._draw_menu_labels(painter, deepest_menu, cx, cy)
+
+    def _draw_menu_level(self, painter: QPainter, menu: MenuLevel, cx: float, cy: float, draw_labels: bool = True):
+        """Draw one level of menu - circles and optionally labels"""
         style = menu.get_style(self.config)
         num_items = len(menu.items)
 
@@ -355,9 +360,46 @@ class MouseDiscWindow(QWidget):
             else:
                 draw_icon(painter, dot_x, dot_y, icon_size, item.id, icon_color)
 
-            # Draw label line only when animation is nearly complete
-            if anim_scale > 0.7:
+            # Draw label line only if requested and animation is nearly complete
+            if draw_labels and anim_scale > 0.7:
                 self._draw_label_line(painter, dot_x, dot_y, item.label, angle, is_hovered, anim_scale)
+
+    def _draw_menu_labels(self, painter: QPainter, menu: MenuLevel, cx: float, cy: float):
+        """Draw labels for a menu level (always shown, no animation delay)"""
+        style = menu.get_style(self.config)
+        num_items = len(menu.items)
+
+        if num_items == 0:
+            return
+
+        # Calculate angle step
+        if menu.level == 0:
+            angle_per_item = 360 / num_items
+            start_angle = -90
+        else:
+            angle_per_item = 360 / len(self.menu_stack[0].items) * style.sub_spacing_factor
+            total_span = (num_items - 1) * angle_per_item
+            start_angle = menu.parent_angle - total_span / 2
+
+        for i, item in enumerate(menu.items):
+            angle = start_angle + i * angle_per_item
+            if menu.level == 0:
+                angle = i * angle_per_item - 90
+
+            # Position
+            dot_x = cx + style.spread_radius * math.cos(math.radians(angle))
+            dot_y = cy + style.spread_radius * math.sin(math.radians(angle))
+
+            # Get label from item or tab
+            label = item.label
+            if not label:
+                tab = self.tab_registry.get(item.id)
+                if tab:
+                    label = tab.label
+
+            # Always draw labels for deepest menu
+            is_hovered = (i == menu.hovered_index)
+            self._draw_label_line(painter, dot_x, dot_y, label, angle, is_hovered, 1.0)
 
     def _draw_controls_bar(self, painter: QPainter, menu: MenuLevel, cx: float, cy: float,
                            start_angle: float, angle_per_item: float, num_items: int, style):
@@ -410,27 +452,23 @@ class MouseDiscWindow(QWidget):
         if base_angle >= 360:
             base_angle = 0
 
-        # Map each item to its specific elbow joint direction
-        # Format: exit_angle (direction from circle), line_angle (horizontal direction for label)
-        item_elbows = {
-            # Cardinal directions
-            0: (315, 0),     # Screenshot (right): up-right 45° then right
-            90: (135, 180),  # Power (bottom): down-left 45° then left
-            180: (135, 180), # Controls (left): down-left 45° then left
-            270: (315, 0),   # Music (top): up-right 45° then right
-            # Diagonal directions
-            45: (45, 0),     # Terminal (bottom-right): down-right then right
-            135: (135, 180), # Apps (bottom-left): down-left then left
-            225: (225, 180), # AI (top-left): up-left then left
-            315: (315, 0),   # Editor (top-right): up-right then right
-        }
-
-        if base_angle in item_elbows:
-            exit_angle, line_angle = item_elbows[base_angle]
-        else:
-            # Fallback - shouldn't happen with 45° snapping
-            exit_angle = base_angle
-            line_angle = 0 if base_angle < 180 else 180
+        # Map angle ranges to elbow joint directions:
+        # 0-90: up-right, then right
+        # 91-179: up-left, then left
+        # 181-270: down-left, then left
+        # 271-359: down-right, then right
+        if 0 <= base_angle <= 90:
+            exit_angle = 315 if base_angle >= 45 else 315  # Up-right
+            line_angle = 0  # Right
+        elif 91 <= base_angle <= 179:
+            exit_angle = 225 if base_angle <= 135 else 225  # Up-left
+            line_angle = 180  # Left
+        elif 181 <= base_angle <= 270:
+            exit_angle = 135 if base_angle <= 225 else 135  # Down-left
+            line_angle = 180  # Left
+        else:  # 271-359
+            exit_angle = 45 if base_angle >= 315 else 45  # Down-right
+            line_angle = 0  # Right
 
         # Line settings - always white
         line_color = QColor("#ffffff")

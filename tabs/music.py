@@ -36,7 +36,7 @@ def _draw_icon(painter: QPainter, cx: float, cy: float, size: float, color: QCol
 
 tab = MenuTab(
     id="music",
-    label="",
+    label="Music",
     color="#e8e8e8",
     children=["previous", "backward10", "play_pause", "forward10", "next"],
     icon_drawer=_draw_icon,

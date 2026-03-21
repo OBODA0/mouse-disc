@@ -40,7 +40,7 @@ def _action():
 
 tab = Tab(
     id="backward10",
-    label="",
+    label="-10s",
     action="playerctl position -10",
     action_type="command",
     color="#e8e8e8",

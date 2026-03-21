@@ -51,7 +51,7 @@ def _action():
 
 tab = Tab(
     id="lock",
-    label="",
+    label="Lock",
     action="hyprlock",
     action_type="command",
     color="#e8e8e8",

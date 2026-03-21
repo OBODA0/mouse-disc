@@ -101,7 +101,7 @@ def _toggle() -> bool:
 
 tab = Tab(
     id="mute_mic",
-    label="",
+    label="Mic",
     action="mute_mic",
     action_type="toggle",
     color="#e8e8e8",

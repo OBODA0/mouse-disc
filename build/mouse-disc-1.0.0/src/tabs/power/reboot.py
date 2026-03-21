@@ -41,7 +41,7 @@ def _action():
 
 tab = Tab(
     id="reboot",
-    label="",
+    label="Reboot",
     action="reboot",
     action_type="command",
     color="#e8e8e8",

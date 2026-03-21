@@ -33,7 +33,7 @@ def _action():
 
 tab = Tab(
     id="obsidian",
-    label="",
+    label="Obs",
     action="obsidian",
     action_type="app",
     color="#e8e8e8",

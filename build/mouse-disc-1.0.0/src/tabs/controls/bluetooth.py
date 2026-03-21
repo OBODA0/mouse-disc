@@ -58,7 +58,7 @@ def _toggle() -> bool:
 
 tab = Tab(
     id="bluetooth",
-    label="",
+    label="BT",
     action="bluetooth",
     action_type="toggle",
     color="#e8e8e8",

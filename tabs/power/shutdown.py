@@ -34,7 +34,7 @@ def _action():
 
 tab = Tab(
     id="shutdown",
-    label="",
+    label="Off",
     action="poweroff",
     action_type="command",
     color="#e8e8e8",

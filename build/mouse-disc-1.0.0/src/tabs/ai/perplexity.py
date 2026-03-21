@@ -48,7 +48,7 @@ def _action():
 
 tab = Tab(
     id="perplexity",
-    label="",
+    label="Perp",
     action="https://perplexity.ai",
     action_type="app",
     color="#e8e8e8",

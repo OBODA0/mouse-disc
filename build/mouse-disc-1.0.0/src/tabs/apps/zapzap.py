@@ -34,7 +34,7 @@ def _action():
 
 tab = Tab(
     id="zapzap",
-    label="",
+    label="Zap",
     action="zapzap",
     action_type="app",
     color="#e8e8e8",

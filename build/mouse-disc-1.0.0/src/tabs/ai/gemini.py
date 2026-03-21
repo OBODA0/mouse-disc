@@ -37,7 +37,7 @@ def _action():
 
 tab = Tab(
     id="gemini",
-    label="",
+    label="Gem",
     action="https://gemini.google.com",
     action_type="app",
     color="#e8e8e8",

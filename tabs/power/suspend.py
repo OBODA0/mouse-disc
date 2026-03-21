@@ -38,7 +38,7 @@ def _action():
 
 tab = Tab(
     id="suspend",
-    label="",
+    label="Sleep",
     action="suspend",
     action_type="command",
     color="#e8e8e8",

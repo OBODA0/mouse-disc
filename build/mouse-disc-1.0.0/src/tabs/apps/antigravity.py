@@ -29,7 +29,7 @@ def _action():
 
 tab = Tab(
     id="antigravity",
-    label="",
+    label="Anti",
     action="antigravity",
     action_type="app",
     color="#e8e8e8",
